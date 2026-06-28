@@ -2,14 +2,37 @@ import { Pool } from 'pg'
 
 let pool
 
+/**
+ * Hapus parameter sslmode dari connection string.
+ *
+ * Kenapa ini perlu: saat `sslmode=require` ada di URL DAN objek `ssl` juga
+ * diberikan terpisah, pg/node-postgres bisa membaca sslmode dari URL dan itu
+ * memicu validasi certificate chain secara strict - mengabaikan
+ * `rejectUnauthorized: false` yang sudah kita set di objek ssl. Inilah yang
+ * menyebabkan error "self-signed certificate in certificate chain", karena
+ * root CA Supabase memang self-signed dan akan selalu ditolak validasi default.
+ * Dengan menghapus sslmode dari URL, satu-satunya sumber kebenaran untuk SSL
+ * adalah objek `ssl` di bawah, sehingga perilakunya konsisten.
+ */
+function stripSslMode(connectionString) {
+  try {
+    const url = new URL(connectionString)
+    url.searchParams.delete('sslmode')
+    return url.toString()
+  } catch {
+    // Kalau gagal parse (seharusnya jarang), kembalikan apa adanya
+    return connectionString
+  }
+}
+
 export function getPool() {
   if (!pool) {
     // Gunakan DATABASE_URL jika tersedia (production Vercel)
     if (process.env.DATABASE_URL) {
       pool = new Pool({
-        connectionString: process.env.DATABASE_URL,
+        connectionString: stripSslMode(process.env.DATABASE_URL),
         ssl: {
-          rejectUnauthorized: false, // Supabase memerlukan SSL
+          rejectUnauthorized: false, // Supabase pakai self-signed root CA; ini disengaja, bukan bug
         },
         max: 10,
         idleTimeoutMillis: 30000,
@@ -33,7 +56,7 @@ export function getPool() {
         user:     process.env.DB_USER     || 'postgres.qjqpepkgjfpbbwnvzuts',
         password: supabasePassword,
         ssl: {
-          rejectUnauthorized: false, // Supabase memerlukan SSL
+          rejectUnauthorized: false, // Supabase pakai self-signed root CA; ini disengaja, bukan bug
         },
         max: 10,
         idleTimeoutMillis: 30000,
