@@ -1,28 +1,30 @@
-import { query } from '@/lib/db'
+// src/app/api/ships/[shipKey]/voyage/route.js
+import { getVoyagesByShip, getVoyageCountByMonth } from '@/lib/db'
 import { NextResponse } from 'next/server'
 
 export async function GET(req, { params }) {
-  const { shipKey } = await params   // ← wajib
+  const { shipKey } = await params
   const { searchParams } = new URL(req.url)
-  const limit = parseInt(searchParams.get('limit') || '200')
+  const limit = parseInt(searchParams.get('limit') || '100')
+  const mode  = searchParams.get('mode') || 'list'
+  const year  = parseInt(searchParams.get('year') || '2025')
 
   try {
-    const result = await query(`
-      SELECT
-        v.id, v.voyage_code, v.date_departure, v.date_arrived,
-        v.from_port, v.to_port, v.distance_nm, v.sea_time_hours,
-        v.sail_condition, v.avg_speed_knots,
-        v.fuel_me_ton, v.fuel_ae_ton, v.cii_attained, v.rating
-      FROM voyage v
-      JOIN ship s ON s.id = v.ship_id
-      WHERE s.ship_key = $1
-      ORDER BY v.voyage_code ASC
-      LIMIT $2
-    `, [shipKey, limit])
+    // Mode list: daftar voyage (untuk history & dropdown simulasi)
+    if (mode === 'list') {
+      const voyages = await getVoyagesByShip(shipKey, limit)
+      return NextResponse.json({ voyages })
+    }
 
-    return NextResponse.json({ voyages: result.rows })
+    // Mode count: jumlah voyage per bulan (untuk grafik opsional)
+    if (mode === 'count') {
+      const counts = await getVoyageCountByMonth(shipKey, year)
+      return NextResponse.json({ counts })
+    }
+
+    return NextResponse.json({ error: 'mode tidak valid' }, { status: 400 })
   } catch (err) {
-    console.error('Error:', err)
+    console.error(`GET /api/ships/${shipKey}/voyage error:`, err)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }

@@ -2,13 +2,18 @@
 import { useState, useEffect } from "react";
 import { calculateCII, getAllShips, getCIIHistory } from "@/lib/api";
 
-// Carbon factor hanya B40
+// Carbon Factor (Cf) — disamakan persis dengan FUEL_CF di lib/ciiCalculation.js
+// supaya info yang ditampilkan ke user konsisten dengan yang dipakai backend.
 const CF_FACTORS = {
-  B40: 2.65,
+  B40: 2.390, // berlaku Jan–Jun 2026
+  B50: 2.343, // berlaku Jul 2026+
 };
-const FUEL_OPTIONS = ["B40"];
+const FUEL_OPTIONS = ["B40", "B50"];
 
-// Koordinat pelabuhan (hardcode sementara, nanti bisa diganti dengan fetch dari /api/ports)
+// Koordinat pelabuhan (hardcode sementara, nanti sebaiknya diganti fetch
+// dari tabel `port` di DB via /api/ports -- supaya 1 sumber data yang sama
+// dengan fallback Haversine di backend, bukan 2 daftar terpisah yang bisa
+// beda-beda isinya)
 const PORT_COORDS = {
   "Gresik (Surabaya), Java [ID]": { lat: -7.15389, lon: 112.65611 },
   "Pantai Camplong [ID]": { lat: -7.242325, lon: 113.2664 },
@@ -22,9 +27,8 @@ const PORT_COORDS = {
   "Bima [ID]": { lat: -8.46, lon: 118.72 },
 };
 
-// Fungsi Haversine (nautical miles)
 function haversineDistance(lat1, lon1, lat2, lon2) {
-  const R = 3440.065; // nautical miles
+  const R = 3440.065;
   const toRad = (deg) => (deg * Math.PI) / 180;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
@@ -41,7 +45,7 @@ export default function FuelInputForm({ onResult }) {
     portFrom: "Gresik (Surabaya), Java [ID]",
     portTo: "Pantai Camplong [ID]",
     distance: "181",
-    days: "5.5",
+    avgSpeed: "10",
     cargo: "6200",
   });
   const [ships, setShips] = useState([]);
@@ -54,7 +58,6 @@ export default function FuelInputForm({ onResult }) {
     getAllShips().then(setShips);
   }, []);
 
-  // Ambil daftar pelabuhan dari voyage
   useEffect(() => {
     getCIIHistory(form.shipKey).then((voyages) => {
       const ports = new Set();
@@ -75,37 +78,37 @@ export default function FuelInputForm({ onResult }) {
     });
   }, [form.shipKey]);
 
-  // Hitung jarak Haversine ketika pelabuhan berubah
   useEffect(() => {
     const fromCoord = PORT_COORDS[form.portFrom];
     const toCoord = PORT_COORDS[form.portTo];
     if (fromCoord && toCoord) {
-      const dist = haversineDistance(
-        fromCoord.lat,
-        fromCoord.lon,
-        toCoord.lat,
-        toCoord.lon
-      );
+      const dist = haversineDistance(fromCoord.lat, fromCoord.lon, toCoord.lat, toCoord.lon);
       setForm((f) => ({ ...f, distance: Math.round(dist).toString() }));
     }
   }, [form.portFrom, form.portTo]);
 
-  // Reset port jika tidak ada di daftar baru
   useEffect(() => {
     if (portList.length > 0) {
-      if (!portList.includes(form.portFrom))
-        setForm((f) => ({ ...f, portFrom: portList[0] }));
-      if (!portList.includes(form.portTo))
-        setForm((f) => ({ ...f, portTo: portList[0] }));
+      if (!portList.includes(form.portFrom)) setForm((f) => ({ ...f, portFrom: portList[0] }));
+      if (!portList.includes(form.portTo)) setForm((f) => ({ ...f, portTo: portList[0] }));
     }
   }, [portList]);
 
   const set = (key, val) => setForm((f) => ({ ...f, [key]: val }));
   const selectedShip = ships.find((s) => s.ship_key === form.shipKey);
 
+  const distNum = parseFloat(form.distance);
+  const speedNum = parseFloat(form.avgSpeed);
+  const estimatedDurationHours = distNum > 0 && speedNum > 0 ? distNum / speedNum : null;
+  const estimatedDurationDays = estimatedDurationHours != null ? (estimatedDurationHours / 24).toFixed(1) : null;
+
   const handleSubmit = async () => {
-    if (!form.distance || !form.days) {
-      setError("Lengkapi jarak dan durasi.");
+    if (!form.distance) {
+      setError("Lengkapi jarak.");
+      return;
+    }
+    if (!form.avgSpeed || parseFloat(form.avgSpeed) <= 0) {
+      setError("Average speed harus diisi dan lebih dari 0 knot.");
       return;
     }
     if (form.portFrom === form.portTo) {
@@ -117,16 +120,15 @@ export default function FuelInputForm({ onResult }) {
     try {
       const payload = {
         shipKey: form.shipKey,
-        fuelType: "B40",
+        fuelType: form.fuelType,
         portFrom: form.portFrom,
         portTo: form.portTo,
         distance: parseFloat(form.distance),
-        days: parseFloat(form.days),
+        avgSpeed: parseFloat(form.avgSpeed),
         cargo: parseFloat(form.cargo),
       };
       const result = await calculateCII(payload);
       onResult && onResult(result);
-      localStorage.setItem("lastCIIResult", JSON.stringify(result));
     } catch {
       setError("Gagal menghitung CII.");
     } finally {
@@ -136,11 +138,8 @@ export default function FuelInputForm({ onResult }) {
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Pilih Kapal */}
       <div className="bg-white border border-gray-200 rounded-xl p-5">
-        <div className="text-sm font-medium text-gray-800 mb-3">
-          Pilih Kapal
-        </div>
+        <div className="text-sm font-medium text-gray-800 mb-3">Pilih Kapal</div>
         <div className="grid grid-cols-2 gap-3">
           {ships.map((ship) => (
             <button
@@ -156,9 +155,7 @@ export default function FuelInputForm({ onResult }) {
                 <div className="w-7 h-7 rounded-md bg-blue-100 flex items-center justify-center text-xs font-bold text-blue-700">
                   {ship.ship_key[0]?.toUpperCase()}
                 </div>
-                <span className="text-xs font-medium text-gray-800">
-                  {ship.name}
-                </span>
+                <span className="text-xs font-medium text-gray-800">{ship.name}</span>
               </div>
               <div className="text-xs text-gray-400">
                 {ship.vessel_type} · DWT {ship.dwt?.toLocaleString()}
@@ -168,47 +165,42 @@ export default function FuelInputForm({ onResult }) {
         </div>
         {selectedShip && (
           <div className="mt-3 text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2">
-            Kapal dipilih:{" "}
-            <span className="font-medium text-gray-600">
-              {selectedShip.name}
-            </span>
-            {" · "}Konsumsi bahan bakar akan dihitung otomatis dari data
-            riwayat.
+            Kapal dipilih: <span className="font-medium text-gray-600">{selectedShip.name}</span>
+            {" · "}Konsumsi bahan bakar akan dihitung otomatis dari model regresi kapal ini.
           </div>
         )}
       </div>
 
-      {/* Bahan Bakar */}
       <div className="bg-white border border-gray-200 rounded-xl p-5">
-        <div className="text-sm font-medium text-gray-800 mb-3">
-          Bahan Bakar
-        </div>
-        <div className="px-3 py-2 rounded-lg bg-blue-50 border border-blue-100 text-sm text-blue-800">
-          Menggunakan <strong>B40</strong> (Carbon Factor: 2.65 g CO₂/g)
+        <div className="text-sm font-medium text-gray-800 mb-3">Jenis Bahan Bakar</div>
+        <Field label="Fuel Type" required>
+          <select value={form.fuelType} onChange={(e) => set("fuelType", e.target.value)}>
+            {FUEL_OPTIONS.map((f) => (
+              <option key={f} value={f}>
+                {f}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <div className="mt-2 px-3 py-2 rounded-lg bg-blue-50 border border-blue-100 text-xs text-blue-800">
+          Carbon Factor {form.fuelType}: {CF_FACTORS[form.fuelType]} g CO₂/g fuel
         </div>
       </div>
 
-      {/* Rute */}
       <div className="bg-white border border-gray-200 rounded-xl p-5">
         <div className="text-sm font-medium text-gray-800 mb-3">
           Rute Pelayaran (khusus {selectedShip?.name || "kapal"})
         </div>
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Pelabuhan Asal" required>
-            <select
-              value={form.portFrom}
-              onChange={(e) => set("portFrom", e.target.value)}
-            >
+          <Field label="Pelabuhan Asal (Origin)" required>
+            <select value={form.portFrom} onChange={(e) => set("portFrom", e.target.value)}>
               {portList.map((p) => (
                 <option key={p}>{p}</option>
               ))}
             </select>
           </Field>
-          <Field label="Pelabuhan Tujuan" required>
-            <select
-              value={form.portTo}
-              onChange={(e) => set("portTo", e.target.value)}
-            >
+          <Field label="Pelabuhan Tujuan (Destination)" required>
+            <select value={form.portTo} onChange={(e) => set("portTo", e.target.value)}>
               {portList.map((p) => (
                 <option key={p}>{p}</option>
               ))}
@@ -223,46 +215,38 @@ export default function FuelInputForm({ onResult }) {
               placeholder="Jarak"
             />
           </Field>
-          <Field label="Durasi (hari)">
+          <Field label="Average Speed (knot)" required>
             <input
               type="number"
-              value={form.days}
-              min="0.5"
-              step="0.5"
-              onChange={(e) => set("days", e.target.value)}
+              value={form.avgSpeed}
+              min="0.1"
+              step="0.1"
+              onChange={(e) => set("avgSpeed", e.target.value)}
+              placeholder="Kecepatan rata-rata"
             />
           </Field>
         </div>
-        <div className="mt-2 text-xs text-gray-400">
-          * Jarak dihitung dengan rumus Haversine berdasarkan koordinat
-          pelabuhan. Anda tetap bisa mengubahnya.
+        {estimatedDurationDays && (
+          <div className="mt-2 text-xs text-gray-400">
+            Estimasi durasi voyage: <span className="font-medium text-gray-600">{estimatedDurationDays} hari</span>{" "}
+            (dihitung dari jarak ÷ average speed)
+          </div>
+        )}
+        <div className="mt-1 text-xs text-gray-400">
+          * Jarak dihitung dengan rumus Haversine berdasarkan koordinat pelabuhan. Anda tetap bisa mengubahnya.
         </div>
       </div>
 
-      {/* Operasional */}
       <div className="bg-white border border-gray-200 rounded-xl p-5">
-        <div className="text-sm font-medium text-gray-800 mb-3">
-          Data Operasional
-        </div>
-        <Field label="Muatan (ton)" required>
-          <input
-            type="number"
-            value={form.cargo}
-            min="0"
-            onChange={(e) => set("cargo", e.target.value)}
-          />
+        <div className="text-sm font-medium text-gray-800 mb-3">Data Operasional</div>
+        <Field label="Muatan / Cargo (ton)" required>
+          <input type="number" value={form.cargo} min="0" onChange={(e) => set("cargo", e.target.value)} />
         </Field>
-        <div className="mt-2 text-xs text-gray-400">
-          Kecepatan tetap 10 knot (sesuai data operasi)
-        </div>
       </div>
 
       {error && (
-        <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2">
-          {error}
-        </div>
+        <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2">{error}</div>
       )}
-
       <button
         onClick={handleSubmit}
         disabled={loading}

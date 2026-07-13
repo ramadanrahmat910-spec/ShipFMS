@@ -3,6 +3,24 @@ import { useEffect, useState } from "react"
 import { getAllShips, getCIIHistory } from "@/lib/api"
 import { CIIBadge } from "@/components/CIIRatingCard"
 
+// REVISI:
+// - Bug utama: `<CIIBadge rating={row.rating || "C"} />` -- kalau
+//   row.rating null/undefined (misal voyage yang belum sempat dihitung
+//   CII-nya), badge SELALU jatuh ke "C" seolah-olah itu rating asli.
+//   Sekarang: kalau rating tidak ada, tampilkan badge netral "–" (abu-abu),
+//   bukan pura-pura kasih grade C.
+
+function RatingCell({ rating }) {
+  if (!rating) {
+    return (
+      <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-100 text-gray-400 text-xs font-medium">
+        –
+      </span>
+    )
+  }
+  return <CIIBadge rating={rating} size="sm" />
+}
+
 export default function HistoriPage() {
   const [ships, setShips] = useState([])
   const [selectedKey, setSelectedKey] = useState("klasogun")
@@ -90,10 +108,10 @@ export default function HistoriPage() {
                   </td>
                   <td className="px-4 py-3 text-right text-gray-500 text-xs">{row.sea_time_hours || "—"}</td>
                   <td className="px-4 py-3 text-right font-semibold text-gray-900 text-xs">
-                    {parseFloat(row.cii_attained).toFixed(2)}
+                    {row.cii_attained != null ? parseFloat(row.cii_attained).toFixed(2) : "—"}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <CIIBadge rating={row.rating || "C"} size="sm" />
+                    <RatingCell rating={row.rating} />
                   </td>
                 </tr>
               ))}

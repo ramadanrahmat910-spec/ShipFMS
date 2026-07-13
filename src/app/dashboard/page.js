@@ -1,178 +1,198 @@
 "use client"
-import { useEffect, useState } from "react"
-import { getAllShips, getAISData, getCIIHistory, getShipCII } from "@/lib/api"
-import CIIRatingCard, { CIIBadge } from "@/components/CIIRatingCard"
-import dynamic from 'next/dynamic';
+import { useEffect, useState, useCallback } from "react"
+import dynamic from "next/dynamic"
+import CIIRatingCard, { CIIBadge }          from "@/components/CIIRatingCard"
+import ShipOperationalCard                   from "@/components/ShipOperationalCard"
+import CIIDataCard                           from "@/components/CIIDataCard"
+import RunningCIIChart, {
+  CumulativeDistanceChart,
+  CumulativeFuelChart,
+}                                            from "@/components/RunningCIIChart"
+import { generateDashboardRecommendation, recommendationColor } from "@/lib/ciiCalculation"
+// ShipMap tetap dynamic (Leaflet tidak support SSR)
+const ShipMap = dynamic(() => import("@/components/ShipMap"), { ssr: false })
 
-const ShipMap = dynamic(() => import('@/components/ShipMap'), {
-  ssr: false,
-});
-import {
-  AreaChart, Area, LineChart, Line,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-} from "recharts"
-
+// ─── HELPERS ─────────────────────────────────────────────────
 function MetricCard({ label, value, sub, subColor, children }) {
   return (
     <div className="bg-gray-50 rounded-xl px-4 py-4">
       <div className="text-xs text-gray-500 mb-1">{label}</div>
-      {children ? children : <div className="text-xl font-semibold text-gray-900">{value}</div>}
-      {sub && <div className={`text-xs mt-1 ${subColor || "text-gray-400"}`}>{sub}</div>}
+      {children ?? <div className="text-xl font-semibold text-gray-900">{value}</div>}
+      {sub && <div className={`text-xs mt-1 ${subColor ?? "text-gray-400"}`}>{sub}</div>}
     </div>
   )
 }
 
+function RecommendationPanel({ recommendations = [] }) {
+  if (!recommendations.length) return null
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="text-sm font-semibold text-gray-900">Rekomendasi Otomatis</div>
+      {recommendations.map((rec, i) => (
+        <div key={i} className={`border rounded-xl px-4 py-3 text-sm ${recommendationColor(rec.type)}`}>
+          {rec.title && <div className="font-semibold mb-0.5">{rec.title}</div>}
+          <div className="leading-relaxed">{rec.message}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ─── MAIN PAGE ───────────────────────────────────────────────
 export default function DashboardPage() {
-  const [ships, setShips] = useState([])
-  const [selectedKey, setSelectedKey] = useState("klasogun")
-  const [livePosition, setLivePosition] = useState(null)
-  const [gpsTrack, setGPSTrack] = useState([])
-  const [ciiTimeline, setCiiTimeline] = useState([])
-  const [allVoyages, setAllVoyages] = useState([])
+  const [ships,           setShips]           = useState([])
+  const [shipGrades,      setShipGrades]      = useState({}) // { klasogun: 'A', balongan: 'C' } — rating asli per kapal utk switcher
+  const [selectedKey,     setSelectedKey]     = useState("klasogun")
+  const [selectedVoyageId,setSelectedVoyageId]= useState(null)
+  // Data dari API
+  const [dashData,        setDashData]        = useState(null)   // getDashboardData
+  const [voyages,         setVoyages]         = useState([])
+  const [voyageDetail,    setVoyageDetail]    = useState(null)
+  const [dailyData,       setDailyData]       = useState(null)   // ShipOperationalCard
+  // AIS
+  const [livePosition,    setLivePosition]    = useState(null)
+  const [gpsTrack,        setGPSTrack]        = useState([])
+  const [loading,         setLoading]         = useState(true)
+  const [loadingVoyage,   setLoadingVoyage]   = useState(false)
+  const year = 2025
 
-  const [selectedVoyageId, setSelectedVoyageId] = useState(null)
-  const [voyageDetail, setVoyageDetail] = useState(null)
-  const [loadingDetail, setLoadingDetail] = useState(false)
-
+  // ── Fetch ships (sekali) ──
   useEffect(() => {
-    getAllShips().then(setShips)
+    fetch("/api/ships")
+      .then(r => r.json())
+      .then(d => setShips(d.ships ?? []))
   }, [])
 
+  // ── Fetch rating asli semua kapal (untuk badge di switcher atas) ──
+  // Dilakukan terpisah dari fetchDashboard, karena fetchDashboard hanya
+  // ambil detail lengkap utk kapal yang aktif dipilih. Tanpa ini, badge
+  // rating kapal lain di switcher tidak ada sumber datanya sama sekali
+  // dan akan selalu fallback ke nilai statis yang salah.
   useEffect(() => {
-    if (selectedVoyageId === null) {
-      getAISData(selectedKey, "latest").then(data => setLivePosition(data.position))
-      getAISData(selectedKey, "track").then(data => setGPSTrack(data.track || []))
-    }
-  }, [selectedKey, selectedVoyageId])
-
-  useEffect(() => {
-    getShipCII(selectedKey).then(data => {
-      if (data && data.ciiByYear) setCiiTimeline(data.ciiByYear)
+    if (ships.length === 0) return
+    Promise.all(
+      ships.map((s) =>
+        fetch(`/api/ships/${s.ship_key}/cii?mode=dashboard&year=${year}`)
+          .then((r) => r.json())
+          .then((d) => [s.ship_key, d?.currentStatus?.running_grade ?? null])
+          .catch(() => [s.ship_key, null])
+      )
+    ).then((entries) => {
+      setShipGrades(Object.fromEntries(entries))
     })
-  }, [selectedKey])
+  }, [ships, year])
+
+  // ── Fetch semua data dashboard saat kapal berubah ──
+  const fetchDashboard = useCallback(async (shipKey) => {
+    setLoading(true)
+    try {
+      const [dashRes, voyageRes, aisLatest, aisTrack] = await Promise.all([
+        fetch(`/api/ships/${shipKey}/cii?mode=dashboard&year=${year}`).then(r => r.json()),
+        fetch(`/api/ships/${shipKey}/voyage?mode=list&limit=100`).then(r => r.json()),
+        fetch(`/api/ships/${shipKey}/ais?mode=latest`).then(r => r.json()),
+        fetch(`/api/ships/${shipKey}/ais?mode=track&date=${new Date().toISOString().split("T")[0]}`).then(r => r.json()),
+      ])
+      setDashData(dashRes)
+      setVoyages(voyageRes.voyages ?? [])
+      setLivePosition(aisLatest.position ?? null)
+      setGPSTrack(aisTrack.track ?? [])
+      // Daily data untuk hari terakhir yang ada di cii_daily
+      const lastDate = dashRes?.currentStatus?.last_data_date
+      if (lastDate) {
+        const dailyRes = await fetch(
+          `/api/ships/${shipKey}/ais?mode=daily&date=${lastDate}`
+        ).then(r => r.json()).catch(() => null)
+        setDailyData(dailyRes ?? null)
+      }
+    } catch (err) {
+      console.error("fetchDashboard error:", err)
+    } finally {
+      setLoading(false)
+    }
+  }, [year])
 
   useEffect(() => {
-    getCIIHistory(selectedKey).then(voyages => setAllVoyages(voyages || []))
-  }, [selectedKey])
+    setSelectedVoyageId(null)
+    setVoyageDetail(null)
+    fetchDashboard(selectedKey)
+  }, [selectedKey, fetchDashboard])
 
+  // ── Fetch voyage detail saat pilih voyage ──
   useEffect(() => {
     if (!selectedVoyageId) {
       setVoyageDetail(null)
       return
     }
-    setLoadingDetail(true)
-    fetch(`/api/ships/${selectedKey}/voyages/${selectedVoyageId}`)
-      .then(res => res.json())
-      .then(data => {
-        if (data.error) {
-          console.error(data.error)
-          setVoyageDetail(null)
-        } else {
-          setVoyageDetail(data.voyage)
-          setGPSTrack(data.track || [])
-          if (data.track && data.track.length > 0) {
-            const last = data.track[data.track.length - 1]
-            setLivePosition({
-              lat: last.lat,
-              lon: last.lon,
-              sog: last.sog || 0,
-              weather: last.weather || "",
-              from_port: data.voyage.from_port,
-              to_port: data.voyage.to_port,
-            })
-          }
-        }
-        setLoadingDetail(false)
-      })
-      .catch(() => setLoadingDetail(false))
-  }, [selectedVoyageId, selectedKey])
+    setLoadingVoyage(true)
+    fetch(`/api/ships/voyages/${selectedVoyageId}`)
+      .then(r => r.json())
+      .then(d => setVoyageDetail(d ?? null))
+      .catch(() => setVoyageDetail(null))
+      .finally(() => setLoadingVoyage(false))
+  }, [selectedVoyageId])
 
-  const ship = ships.find(s => s.ship_key === selectedKey) || ships[0]
-  if (!ship) return <div className="p-6 text-sm text-gray-400">Memuat data kapal...</div>
+  // ── Derived values ──
+  const ship          = ships.find(s => s.ship_key === selectedKey)
+  const currentStatus = dashData?.currentStatus   ?? null
+  const monthlyChart  = dashData?.monthlyChart    ?? []
+  const cumulative    = dashData?.cumulativeChart ?? []
+  const voyageCount   = dashData?.voyageCount     ?? []
+  // Nilai CII yang ditampilkan
+  const displayCII    = currentStatus?.running_cii    ?? null
+  const displayGrade  = currentStatus?.running_grade  ?? "—"
+  const ciiRequired   = currentStatus?.cii_required   ?? null
+  const ciiRef        = ship?.cii_ref_value            ?? null
+  const lastDate      = currentStatus?.last_data_date  ?? null
+  const dateLimitReached = currentStatus?.date_limit_reached ?? null
+  // Metric ringkasan
+  const distYTD       = currentStatus?.distance_nm_ytd   ?? null
+  const fuelYTD       = currentStatus?.fuel_cons_mt_ytd  ?? null
+  const co2YTD        = currentStatus?.co2_emission_g_ytd ?? null
+  // Speed rata-rata dari monthlyChart (bulan terakhir yang ada data)
+  const lastMonthData = [...monthlyChart].reverse().find(m => m.running_cii != null)
+  const avgSpeedDisplay = dailyData?.avg_speed_knot
+    ? `${dailyData.avg_speed_knot} kn`
+    : "—"
+  // Rekomendasi otomatis
+  const recommendations = currentStatus
+    ? generateDashboardRecommendation(currentStatus, selectedKey, year)
+    : []
+  // Sort voyages terbaru dulu
+  const sortedVoyages = [...voyages].sort((a, b) =>
+    new Date(b.date_departure ?? 0) - new Date(a.date_departure ?? 0)
+  )
 
-  const isRealTime = selectedKey === "klasogun"
-  const latestGPS = livePosition
-
-  // ==================== DATA METRIC ====================
-  let displayData;
-  if (voyageDetail) {
-    const dist = parseFloat(voyageDetail.distance_nm) || 0
-    const seaDays = parseFloat(voyageDetail.sea_time_days) || (parseFloat(voyageDetail.sea_time_hours) / 24)
-    const fuelPerNm = ship.fuel_cons_2025 ? (ship.fuel_cons_2025 / ship.distance_2025) : 0
-    const estFuel = (dist * fuelPerNm).toFixed(1)
-    displayData = {
-      cii: voyageDetail.cii_attained ? parseFloat(voyageDetail.cii_attained).toFixed(2) : "—",
-      rating: voyageDetail.rating || "C",
-      fuelME: estFuel,
-      fuelAE: "—",
-      distance: Math.round(dist).toLocaleString(),
-      speed: voyageDetail.avg_speed_knots ? parseFloat(voyageDetail.avg_speed_knots).toFixed(1) : "10.0",
-      seaDays: seaDays.toFixed(1),
-      weather: latestGPS?.weather || "",
-    }
-  } else {
-    // Mode ringkasan
-    let fuelMeValue = "—";
-    // Cek apakah kapal Balongan dan model tersedia
-    if (ship.ship_key === 'balongan' && ship.fuel_coef_speed != null && ship.fuel_intercept != null) {
-      // Gunakan model regresi pada kecepatan 10 knot
-      const speedKnot = 10;
-      const fuelPerHour = ship.fuel_coef_speed * Math.pow(speedKnot, 3) + ship.fuel_intercept;
-      fuelMeValue = (fuelPerHour * 24).toFixed(1);
-    } else if (ship.fuel_cons_2025) {
-      // Fallback rata‑rata tahunan
-      fuelMeValue = (ship.fuel_cons_2025 / 365).toFixed(1);
-    }
-
-    displayData = {
-      cii: ship.cii_attained ? parseFloat(ship.cii_attained).toFixed(2) : "—",
-      rating: ship.rating || "C",
-      fuelME: fuelMeValue,
-      fuelAE: "—",
-      distance: ship.distance_2025 ? parseInt(ship.distance_2025).toLocaleString() : "—",
-      speed: "10.0",
-      seaDays: null,
-      weather: latestGPS?.weather || "",
-    }
-  }
-
-  const ciiChartData = ciiTimeline.length > 0
-    ? ciiTimeline.map(d => ({ label: d.year, cii: parseFloat(d.cii_attained) }))
-    : [
-        { label: "2023", cii: 15.3 }, { label: "2024", cii: 15.1 },
-        { label: "2025", cii: 14.9 }, { label: "2026", cii: 14.7 },
-        { label: "2027", cii: 14.5 }, { label: "2028", cii: 14.3 },
-      ]
-
-  const sortedVoyages = [...allVoyages].sort((a, b) => {
-    if (!a.date_departure) return 1
-    if (!b.date_departure) return -1
-    return new Date(b.date_departure) - new Date(a.date_departure)
-  })
+  // ─────────────────────────────────────────────────────────
+  if (!ship && !loading) return (
+    <div className="p-6 text-sm text-gray-400">Memuat data kapal...</div>
+  )
 
   return (
     <div className="flex flex-col gap-5 p-6">
+      {/* ── Header ── */}
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-lg font-semibold text-gray-900">Dashboard CII</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            {ship.name} — {isRealTime ? "Live GPS Tracking" : "Data Operasional"}
-            {voyageDetail && ` — Detail Voyage`}
+            {ship?.name ?? "..."} —{" "}
+            {selectedVoyageId ? "Detail Voyage" : "Live GPS Tracking"}
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          {isRealTime && latestGPS && !voyageDetail && (
-            <span className="text-xs px-3 py-1.5 bg-green-50 text-green-700 rounded-full border border-green-200">
-              🟢 Live GPS
-            </span>
-          )}
-        </div>
+        {!selectedVoyageId && livePosition && (
+          <span className="text-xs px-3 py-1.5 bg-green-50 text-green-700 rounded-full border border-green-200">
+            🟢 Live GPS
+          </span>
+        )}
       </div>
 
-      {/* Pilih Kapal */}
+      {/* ── Pilih Kapal ── */}
       <div className="flex gap-3">
-        {ships.map((s) => {
-          const r = s.rating || "C"
+        {ships.map(s => {
+          // Rating asli diambil dari shipGrades (hasil fetch cii dashboard
+          // per kapal), BUKAN dari s.rating -- field itu tidak pernah ada
+          // di data ships (lihat getAllShips() di lib/db.js) dan dulu
+          // selalu fallback ke "C" secara keliru untuk semua kapal.
+          const r = shipGrades[s.ship_key] ?? "—"
           const rColor = {
             A: "text-teal-700 bg-teal-50 border-teal-200",
             B: "text-green-700 bg-green-50 border-green-200",
@@ -183,10 +203,7 @@ export default function DashboardPage() {
           return (
             <button
               key={s.ship_key}
-              onClick={() => {
-                setSelectedKey(s.ship_key)
-                setSelectedVoyageId(null)
-              }}
+              onClick={() => setSelectedKey(s.ship_key)}
               className={`flex items-center gap-3 px-4 py-2.5 rounded-xl border text-sm transition-all ${
                 selectedKey === s.ship_key
                   ? "bg-white border-blue-400 shadow-sm text-gray-900"
@@ -198,128 +215,131 @@ export default function DashboardPage() {
               </div>
               <div className="text-left">
                 <div className="font-medium text-xs">{s.name}</div>
-                <div className="text-xs text-gray-400">{s.vessel_type} · DWT {s.dwt?.toLocaleString()}</div>
+                <div className="text-xs text-gray-400">DWT {s.dwt?.toLocaleString()}</div>
               </div>
-              <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${rColor[r] || rColor["C"]}`}>{r}</span>
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${rColor[r] ?? "text-gray-500 bg-gray-50 border-gray-200"}`}>
+                {r}
+              </span>
             </button>
           )
         })}
       </div>
 
-      {/* Dropdown Voyage */}
+      {/* ── Dropdown Voyage ── */}
       <div className="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-4 py-3">
-        <label htmlFor="voyageSelect" className="text-sm font-medium text-gray-700 whitespace-nowrap">
+        <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
           Riwayat Perjalanan:
         </label>
         <select
-          id="voyageSelect"
-          value={selectedVoyageId || ""}
-          onChange={(e) => {
-            const val = e.target.value
-            setSelectedVoyageId(val ? parseInt(val) : null)
-          }}
+          value={selectedVoyageId ?? ""}
+          onChange={e => setSelectedVoyageId(e.target.value ? parseInt(e.target.value) : null)}
           className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white text-gray-900 focus:outline-none focus:border-blue-400"
         >
           <option value="">📊 Semua Data (Ringkasan)</option>
           {sortedVoyages.map(v => {
-            const depDate = v.date_departure
-              ? new Date(v.date_departure).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
-              : '?'
+            const dep = v.date_departure
+              ? new Date(v.date_departure).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })
+              : "?"
             return (
               <option key={v.id} value={v.id}>
-                {v.from_port?.split(',')[0] || '?'} → {v.to_port?.split(',')[0] || '?'} — {depDate}
+                {v.from_port?.split(",")[0] ?? "?"} → {v.to_port?.split(",")[0] ?? "?"} — {dep}
               </option>
             )
           })}
         </select>
-        {loadingDetail && <span className="text-xs text-gray-400">Memuat...</span>}
+        {loadingVoyage && <span className="text-xs text-gray-400">Memuat...</span>}
       </div>
 
-      {/* Metric Cards */}
-      <div className="grid grid-cols-4 gap-3">
-        <MetricCard
-          label={voyageDetail ? "CII Voyage Ini" : "Nilai CII Saat Ini"}
-          sub={voyageDetail ? `Rating: ${displayData.rating}` : `Target: < ${ship.cii_ref_value || "—"}`}
-        >
-          <span className="flex items-baseline gap-2">
-            <span className="text-xl font-semibold text-gray-900">{displayData.cii}</span>
-            <CIIBadge rating={displayData.rating} size="sm" />
-          </span>
-        </MetricCard>
-        <MetricCard
-          label={voyageDetail ? "Jarak Voyage" : "Konsumsi BBM"}
-          value={voyageDetail ? `${displayData.distance} nm` : `${displayData.fuelME} t/hari`}
-          sub={voyageDetail ? (displayData.seaDays ? `${displayData.seaDays} hari` : "") : (ship.ship_key === 'balongan' && ship.fuel_coef_speed ? "estimasi model regresi" : "rata-rata tahun 2025")}
-        />
-        <MetricCard
-          label="Kecepatan"
-          value={`${displayData.speed} kn`}
-          sub="rata‑rata operasi"
-        />
-        <MetricCard
-          label={voyageDetail ? "Konsumsi BBM (Est.)" : "Total Jarak 2025"}
-          value={voyageDetail ? `${displayData.fuelME} ton` : `${displayData.distance} nm`}
-          sub={!voyageDetail && latestGPS?.weather ? latestGPS.weather : ""}
-        />
-      </div>
-
-      {/* Charts – hanya tampil di mode ringkasan */}
-      {!voyageDetail && (
-        <div className="grid grid-cols-2 gap-4">
-          <div className="bg-white border border-gray-200 rounded-xl p-5">
-            <div className="text-sm font-medium text-gray-700 mb-3">Tren CII — Per Tahun</div>
-            <ResponsiveContainer width="100%" height={140}>
-              <AreaChart data={ciiChartData} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
-                <defs>
-                  <linearGradient id="ciiGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="#3B82F6" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
-                <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#9CA3AF" }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: "#9CA3AF" }} axisLine={false} tickLine={false} />
-                <Tooltip formatter={(v) => [Number(v).toFixed(2), "CII"]} />
-                <Area type="monotone" dataKey="cii" stroke="#3B82F6" strokeWidth={2} fill="url(#ciiGrad)" dot={false} />
-              </AreaChart>
-            </ResponsiveContainer>
+      {loading ? (
+        <div className="text-sm text-gray-400 text-center py-8">Memuat data dashboard...</div>
+      ) : (
+        <>
+          {/* ── Metric Cards ── */}
+          <div className="grid grid-cols-4 gap-3">
+            <MetricCard
+              label="Nilai CII Saat Ini"
+              sub={`Target: < ${ciiRequired ? Number(ciiRequired).toFixed(2) : "—"}`}
+            >
+              <span className="flex items-baseline gap-2">
+                <span className="text-xl font-semibold text-gray-900">
+                  {displayCII ? Number(displayCII).toFixed(2) : "—"}
+                </span>
+                {displayGrade !== "—" && <CIIBadge rating={displayGrade} size="sm" />}
+              </span>
+            </MetricCard>
+            <MetricCard
+              label="Konsumsi BBM"
+              value={fuelYTD ? `${Number(fuelYTD).toFixed(1)} MT` : "—"}
+              sub="akumulasi tahun 2025"
+            />
+            <MetricCard
+              label="Kecepatan"
+              value={avgSpeedDisplay}
+              sub="rata-rata harian dari AIS"
+            />
+            <MetricCard
+              label="Total Jarak 2025"
+              value={distYTD ? `${Math.round(distYTD).toLocaleString("id-ID")} NM` : "—"}
+              sub={lastDate ? `Data per ${new Date(lastDate).toLocaleDateString("id-ID", { day: "numeric", month: "short" })}` : ""}
+            />
           </div>
 
-          <div className="bg-white border border-gray-200 rounded-xl p-5">
-            <div className="text-sm font-medium text-gray-700 mb-3">Total Konsumsi BBM — Tahunan</div>
-            <ResponsiveContainer width="100%" height={140}>
-              <LineChart data={[
-                { t: "2023", v: ship.fuel_cons_2023 || 0 },
-                { t: "2024", v: ship.fuel_cons_2024 || 0 },
-                { t: "2025", v: ship.fuel_cons_2025 || 0 },
-              ]} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
-                <XAxis dataKey="t" tick={{ fontSize: 10, fill: "#9CA3AF" }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: "#9CA3AF" }} axisLine={false} tickLine={false} />
-                <Tooltip formatter={(v) => [`${Number(v).toFixed(0)} MT`, "Total BBM"]} />
-                <Line type="monotone" dataKey="v" stroke="#F59E0B" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
+          {/* ── Grafik Utama: Running Annual CII ── */}
+          <RunningCIIChart
+            monthlyData={monthlyChart}
+            ciiRequired={ciiRequired}
+            year={year}
+            height={220}
+          />
+
+          {/* ── Grafik Kumulatif: Distance + Fuel ── */}
+          <div className="grid grid-cols-2 gap-4">
+            <CumulativeDistanceChart data={cumulative} year={year} height={160} />
+            <CumulativeFuelChart     data={cumulative} year={year} height={160} />
           </div>
-        </div>
+
+          {/* ── Peta + Rating CII ── */}
+          <div className="grid grid-cols-2 gap-4">
+            <ShipMap
+              from={voyageDetail?.from_port ?? livePosition?.from_port ?? ""}
+              to={voyageDetail?.to_port     ?? livePosition?.to_port   ?? ""}
+              shipLabel={ship?.name ?? ""}
+              gpsTrack={gpsTrack}
+              isRealTime={!selectedVoyageId}
+            />
+            <CIIRatingCard
+              cii={displayCII}
+              rating={displayGrade}
+              ciiRequired={ciiRequired}
+              refValue={ciiRef}
+              lastDate={lastDate}
+              shipKey={selectedKey}
+              year={year}
+              dateLimitReached={dateLimitReached}
+            />
+          </div>
+
+          {/* ── 2 Kotak Baru: Ship Operational + CII Data ── */}
+          <div className="grid grid-cols-2 gap-4">
+            <ShipOperationalCard
+              data={dailyData}
+              date={lastDate}
+            />
+            <CIIDataCard
+              data={currentStatus ? {
+                distance_nm_annual:    currentStatus.distance_nm_ytd,
+                fuel_cons_mt_annual:   currentStatus.fuel_cons_mt_ytd,
+                co2_emission_g_annual: currentStatus.co2_emission_g_ytd,
+                transport_work_annual: currentStatus.transport_work_ytd,
+              } : null}
+              year={year}
+            />
+          </div>
+
+          {/* ── Rekomendasi Otomatis ── */}
+          <RecommendationPanel recommendations={recommendations} />
+        </>
       )}
-
-      {/* Peta & Rating */}
-      <div className="grid grid-cols-2 gap-4">
-        <ShipMap
-          from={voyageDetail?.from_port || latestGPS?.from_port || ship.from_port || "Gresik (Surabaya)"}
-          to={voyageDetail?.to_port || latestGPS?.to_port || ship.to_port || "Pantai Camplong"}
-          shipLabel={ship.name}
-          gpsTrack={gpsTrack}
-          isRealTime={isRealTime && !voyageDetail}
-        />
-        <CIIRatingCard
-          cii={displayData.cii}
-          rating={displayData.rating}
-          target={ship.cii_req}
-          refValue={ship.cii_ref_value}
-        />
-      </div>
     </div>
   )
 }

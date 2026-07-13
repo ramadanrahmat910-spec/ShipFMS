@@ -1,47 +1,55 @@
-import { query } from '@/lib/db'
+// src/app/api/ships/[shipKey]/cii/route.js
+import {
+  getShipCurrentStatus,
+  getRunningCIIMonthly,
+  getCIIAnnualSummary,
+  getCumulativeByMonth,
+  getCIIBoundaries,
+  getDashboardData,
+} from '@/lib/db'
 import { NextResponse } from 'next/server'
 
 export async function GET(req, { params }) {
-  const { shipKey } = await params   // ✅ perbaikan
+  const { shipKey } = await params
+  const { searchParams } = new URL(req.url)
+  const year = parseInt(searchParams.get('year') || '2025')
+  const mode = searchParams.get('mode') || 'dashboard'
 
   try {
-    const ciiRes = await query(`
-      SELECT cb.year, cb.cii_ref, cb.cii_req, cb.cii_attained, cb.rating,
-             cb.boundary_superior, cb.boundary_lower,
-             cb.boundary_upper, cb.boundary_inferior,
-             cb.reduction_factor
-      FROM cii_boundaries cb
-      JOIN ship s ON s.id = cb.ship_id
-      WHERE s.ship_key = $1
-      ORDER BY cb.year ASC
-    `, [shipKey])
+    // Mode dashboard: ambil semua data sekaligus (untuk dashboard utama)
+    if (mode === 'dashboard') {
+      const data = await getDashboardData(shipKey, year)
+      return NextResponse.json(data)
+    }
 
-    const fuelRes = await query(`
-      SELECT fa.year, fa.fuel_cons_mt, fa.distance_nm
-      FROM fuel_annual fa
-      JOIN ship s ON s.id = fa.ship_id
-      WHERE s.ship_key = $1
-      ORDER BY fa.year ASC
-    `, [shipKey])
+    // Mode status: hanya kotak Rating CII
+    if (mode === 'status') {
+      const status = await getShipCurrentStatus(shipKey)
+      return NextResponse.json(status)
+    }
 
-    const voyageStats = await query(`
-      SELECT
-        COUNT(*) FILTER (WHERE sail_condition = 'Laden')   AS laden_count,
-        COUNT(*) FILTER (WHERE sail_condition = 'Ballast') AS ballast_count,
-        SUM(distance_nm)                                   AS total_distance,
-        SUM(sea_time_hours)                                AS total_hours,
-        AVG(avg_speed_knots)                               AS avg_speed,
-        AVG(distance_nm)                                   AS avg_distance_per_voyage
-      FROM voyage v
-      JOIN ship s ON s.id = v.ship_id
-      WHERE s.ship_key = $1
-    `, [shipKey])
+    // Mode chart: data grafik running CII bulanan
+    if (mode === 'chart') {
+      const [monthly, cumulative] = await Promise.all([
+        getRunningCIIMonthly(shipKey, year),
+        getCumulativeByMonth(shipKey, year),
+      ])
+      return NextResponse.json({ monthly, cumulative })
+    }
 
-    return NextResponse.json({
-      ciiByYear: ciiRes.rows,
-      fuelByYear: fuelRes.rows,
-      voyageStats: voyageStats.rows[0],
-    })
+    // Mode annual: kotak CII Data (akumulasi tahunan)
+    if (mode === 'annual') {
+      const annual = await getCIIAnnualSummary(shipKey, year)
+      return NextResponse.json(annual)
+    }
+
+    // Mode boundaries: batas rating A-E
+    if (mode === 'boundaries') {
+      const boundaries = await getCIIBoundaries(shipKey, year)
+      return NextResponse.json(boundaries)
+    }
+
+    return NextResponse.json({ error: 'mode tidak valid' }, { status: 400 })
   } catch (err) {
     console.error(`GET /api/ships/${shipKey}/cii error:`, err)
     return NextResponse.json({ error: err.message }, { status: 500 })
