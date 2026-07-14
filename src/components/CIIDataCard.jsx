@@ -1,21 +1,31 @@
 "use client"
+// components/CIIDataCard.jsx — REVISI
+// =====================================
+// [FIX #1] Tambah props opsional title/badgeLabel/periodText supaya
+// kartu ini bisa dipakai untuk 2 mode: akumulasi tahunan (default,
+// dashboard live) ATAU data satu voyage terpilih (dashboard.js
+// mengirim override saat user pilih voyage dari dropdown "Riwayat
+// Perjalanan"). Tanpa override, perilaku persis seperti sebelumnya.
 
 import { formatCO2, formatNum } from '@/lib/ciiCalculation'
 
 /**
- * CIIDataCard — kotak 2 dari 2 kotak baru (revisi dosen)
- *
- * Menampilkan data akumulasi CII tahunan:
- *   - Distance tahunan (NM)
- *   - Fuel Consumption tahunan (MT/Day)
- *   - CO2 Emission tahunan
- *   - Transport Work tahunan
- *
  * Props:
- *   data   {object} — dari v_cii_data_card atau getCIIAnnualSummary()
- *   year   {number} — tahun yang ditampilkan
+ *   data        {object} — dari v_cii_data_card / getCIIAnnualSummary(),
+ *               ATAU objek voyage-shaped yang dikirim dashboard saat
+ *               mode "Detail Voyage" aktif.
+ *   year        {number}
+ *   title       {string} — override judul kartu (default: "CII Data")
+ *   badgeLabel  {string} — override label badge kanan atas (default: "Tahunan")
+ *   periodText  {string} — override baris sub-judul (default: "Akumulasi Jan–Des {year}")
  */
-export default function CIIDataCard({ data, year = 2025 }) {
+export default function CIIDataCard({
+  data,
+  year = 2025,
+  title = 'CII Data',
+  badgeLabel = 'Tahunan',
+  periodText,
+}) {
   const distanceAnnual   = data?.distance_nm_annual      ?? null
   const fuelAnnual       = data?.fuel_cons_mt_annual     ?? null
   const co2Annual        = data?.co2_emission_g_annual   ?? null
@@ -66,28 +76,35 @@ export default function CIIDataCard({ data, year = 2025 }) {
     },
   ]
 
+  // Kalau title mode voyage dipakai, label tiap item juga lebih pas
+  // tanpa kata "tahunan" — tapi ini kosmetik saja, tidak wajib diubah.
+  const isVoyageMode = title !== 'CII Data'
+  const displayItems = isVoyageMode
+    ? items.map(it => ({ ...it, label: it.label.replace(' tahunan', '') }))
+    : items
+
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-5 h-full">
-
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div>
           <div className="text-xs text-gray-400 font-medium uppercase tracking-wide">
-            CII Data
+            {title}
           </div>
-          <div className="text-xs text-gray-400 mt-0.5">Akumulasi Jan–Des {year}</div>
+          <div className="text-xs text-gray-400 mt-0.5">
+            {periodText ?? `Akumulasi Jan–Des ${year}`}
+          </div>
         </div>
         <span className="text-xs bg-purple-50 text-purple-600 border border-purple-100 rounded-full px-2.5 py-0.5 font-medium">
-          Tahunan
+          {badgeLabel}
         </span>
       </div>
-
       {/* Items */}
       <div className="flex flex-col gap-4">
-        {items.map((item, idx) => (
+        {displayItems.map((item, idx) => (
           <div
             key={idx}
-            className={`flex items-center justify-between py-2.5 ${idx < items.length - 1 ? 'border-b border-gray-50' : ''}`}
+            className={`flex items-center justify-between py-2.5 ${idx < displayItems.length - 1 ? 'border-b border-gray-50' : ''}`}
           >
             <div className="flex items-center gap-2">
               <div className={`w-7 h-7 rounded-lg ${item.iconBg} flex items-center justify-center flex-shrink-0`}>
@@ -101,7 +118,6 @@ export default function CIIDataCard({ data, year = 2025 }) {
           </div>
         ))}
       </div>
-
     </div>
   )
 }

@@ -1,4 +1,12 @@
 "use client";
+// components/FuelInputForm.jsx — REVISI
+// ========================================
+// [FIX] Field "Jarak (nm)" dihapus dari tampilan form — user diminta
+// tidak perlu (dan tidak bisa) mengisi jarak secara manual di form.
+// Jarak tetap dihitung otomatis via Haversine (logic-nya TIDAK berubah),
+// hanya saja sekarang murni internal (form.distance) dan baru
+// ditampilkan setelah submit, di panel hasil (lihat dashboard/input/page.js).
+
 import { useState, useEffect } from "react";
 import { calculateCII, getAllShips, getCIIHistory } from "@/lib/api";
 
@@ -44,7 +52,7 @@ export default function FuelInputForm({ onResult }) {
     fuelType: "B40",
     portFrom: "Gresik (Surabaya), Java [ID]",
     portTo: "Pantai Camplong [ID]",
-    distance: "181",
+    distance: "181",   // tetap ada di state — dihitung otomatis, tidak diisi manual
     avgSpeed: "10",
     cargo: "6200",
   });
@@ -53,6 +61,14 @@ export default function FuelInputForm({ onResult }) {
   const [allRoutes, setAllRoutes] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  // [FIX] Sebelumnya, mengubah input (mis. Muatan) setelah hasil pertama
+  // muncul TIDAK memicu apa pun sampai tombol "Hitung CII" ditekan lagi —
+  // gampang kelewat, terasa seperti hasil "tidak ikut refresh". Sekarang:
+  // setelah hasil pertama berhasil didapat (hasResult=true), perubahan
+  // input APA PUN otomatis menghitung ulang (debounced 700ms) tanpa perlu
+  // klik tombol lagi. Klik pertama tetap manual (tombol), supaya halaman
+  // tidak langsung menampilkan hasil begitu dibuka.
+  const [hasResult, setHasResult] = useState(false);
 
   useEffect(() => {
     getAllShips().then(setShips);
@@ -78,6 +94,8 @@ export default function FuelInputForm({ onResult }) {
     });
   }, [form.shipKey]);
 
+  // Jarak dihitung otomatis tiap kali pelabuhan asal/tujuan berubah —
+  // logic ini TIDAK berubah, cuma hasilnya tidak lagi ditampilkan di form.
   useEffect(() => {
     const fromCoord = PORT_COORDS[form.portFrom];
     const toCoord = PORT_COORDS[form.portTo];
@@ -97,22 +115,18 @@ export default function FuelInputForm({ onResult }) {
   const set = (key, val) => setForm((f) => ({ ...f, [key]: val }));
   const selectedShip = ships.find((s) => s.ship_key === form.shipKey);
 
-  const distNum = parseFloat(form.distance);
-  const speedNum = parseFloat(form.avgSpeed);
-  const estimatedDurationHours = distNum > 0 && speedNum > 0 ? distNum / speedNum : null;
-  const estimatedDurationDays = estimatedDurationHours != null ? (estimatedDurationHours / 24).toFixed(1) : null;
-
-  const handleSubmit = async () => {
-    if (!form.distance) {
-      setError("Lengkapi jarak.");
-      return;
-    }
+  const handleSubmit = async (opts = {}) => {
+    const { silent = false } = opts;
     if (!form.avgSpeed || parseFloat(form.avgSpeed) <= 0) {
-      setError("Average speed harus diisi dan lebih dari 0 knot.");
+      if (!silent) setError("Average speed harus diisi dan lebih dari 0 knot.");
       return;
     }
     if (form.portFrom === form.portTo) {
-      setError("Pelabuhan asal dan tujuan tidak boleh sama.");
+      if (!silent) setError("Pelabuhan asal dan tujuan tidak boleh sama.");
+      return;
+    }
+    if (!form.cargo || parseFloat(form.cargo) <= 0) {
+      if (!silent) setError("Muatan / cargo harus diisi dan lebih dari 0 ton.");
       return;
     }
     setError(null);
@@ -123,18 +137,32 @@ export default function FuelInputForm({ onResult }) {
         fuelType: form.fuelType,
         portFrom: form.portFrom,
         portTo: form.portTo,
-        distance: parseFloat(form.distance),
+        distance: parseFloat(form.distance),   // tetap dikirim, cuma tidak dari input manual
         avgSpeed: parseFloat(form.avgSpeed),
         cargo: parseFloat(form.cargo),
       };
       const result = await calculateCII(payload);
+      setHasResult(true);
       onResult && onResult(result);
     } catch {
-      setError("Gagal menghitung CII.");
+      if (!silent) setError("Gagal menghitung CII.");
     } finally {
       setLoading(false);
     }
   };
+
+  // [FIX] Auto-recalculate (debounced) setiap kali input berubah, TAPI
+  // hanya setelah hasil pertama berhasil didapat (hasResult=true) —
+  // supaya "Muatan", kecepatan, pelabuhan, atau jenis BBM yang diubah
+  // langsung tercermin di hasil & rekomendasi tanpa perlu klik tombol lagi.
+  useEffect(() => {
+    if (!hasResult) return;
+    const t = setTimeout(() => {
+      handleSubmit({ silent: true });
+    }, 700);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.shipKey, form.fuelType, form.portFrom, form.portTo, form.avgSpeed, form.cargo]);
 
   return (
     <div className="flex flex-col gap-5">
@@ -206,34 +234,27 @@ export default function FuelInputForm({ onResult }) {
               ))}
             </select>
           </Field>
-          <Field label="Jarak (nm) – dihitung otomatis (Haversine)">
-            <input
-              type="number"
-              value={form.distance}
-              min="0"
-              onChange={(e) => set("distance", e.target.value)}
-              placeholder="Jarak"
-            />
-          </Field>
-          <Field label="Average Speed (knot)" required>
-            <input
-              type="number"
-              value={form.avgSpeed}
-              min="0.1"
-              step="0.1"
-              onChange={(e) => set("avgSpeed", e.target.value)}
-              placeholder="Kecepatan rata-rata"
-            />
-          </Field>
         </div>
-        {estimatedDurationDays && (
-          <div className="mt-2 text-xs text-gray-400">
-            Estimasi durasi voyage: <span className="font-medium text-gray-600">{estimatedDurationDays} hari</span>{" "}
-            (dihitung dari jarak ÷ average speed)
+        {/* [FIX] Average Speed dipusatkan di barisnya sendiri — sebelumnya
+            menempel di kolom kanan grid 2-kolom dengan ruang kosong di
+            kiri karena field Jarak sudah dihapus dari sini. */}
+        <div className="mt-4 flex justify-center">
+          <div className="w-full max-w-[220px]">
+            <Field label="Average Speed (knot)" required>
+              <input
+                type="number"
+                value={form.avgSpeed}
+                min="0.1"
+                step="0.1"
+                onChange={(e) => set("avgSpeed", e.target.value)}
+                placeholder="Kecepatan rata-rata"
+              />
+            </Field>
           </div>
-        )}
-        <div className="mt-1 text-xs text-gray-400">
-          * Jarak dihitung dengan rumus Haversine berdasarkan koordinat pelabuhan. Anda tetap bisa mengubahnya.
+        </div>
+        <div className="mt-2 text-xs text-gray-400">
+          Jarak antar pelabuhan dihitung otomatis (rumus Haversine) dan akan ditampilkan
+          bersama estimasi durasi di halaman hasil setelah Anda submit.
         </div>
       </div>
 
@@ -247,13 +268,21 @@ export default function FuelInputForm({ onResult }) {
       {error && (
         <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2">{error}</div>
       )}
+
       <button
-        onClick={handleSubmit}
+        onClick={() => handleSubmit()}
         disabled={loading}
         className="w-full py-3 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50"
       >
         {loading ? "Menghitung..." : "Hitung CII & Dapatkan Rekomendasi →"}
       </button>
+      {hasResult && (
+        <div className="text-xs text-gray-400 text-center -mt-2">
+          {loading
+            ? "Memperbarui hasil otomatis…"
+            : "Hasil sudah tersedia — ubah input apa pun dan hasil akan otomatis dihitung ulang."}
+        </div>
+      )}
     </div>
   );
 }

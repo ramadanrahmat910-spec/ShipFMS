@@ -1,14 +1,14 @@
 "use client"
+// src/app/dashboard/histori/page.js — REVISI
+// =============================================
+// [FIX] Kolom "Sea Time" dulu membaca row.sea_time_hours, padahal
+//       getVoyagesByShip() di lib/db.js hanya men-SELECT sea_time_days
+//       — jadi kolom itu selalu "—". Sekarang membaca sea_time_days
+//       dan ditampilkan sebagai "X hari".
+
 import { useEffect, useState } from "react"
 import { getAllShips, getCIIHistory } from "@/lib/api"
 import { CIIBadge } from "@/components/CIIRatingCard"
-
-// REVISI:
-// - Bug utama: `<CIIBadge rating={row.rating || "C"} />` -- kalau
-//   row.rating null/undefined (misal voyage yang belum sempat dihitung
-//   CII-nya), badge SELALU jatuh ke "C" seolah-olah itu rating asli.
-//   Sekarang: kalau rating tidak ada, tampilkan badge netral "–" (abu-abu),
-//   bukan pura-pura kasih grade C.
 
 function RatingCell({ rating }) {
   if (!rating) {
@@ -45,7 +45,6 @@ export default function HistoriPage() {
         <h1 className="text-lg font-semibold text-gray-900">Histori Pelayaran</h1>
         <p className="text-sm text-gray-500 mt-0.5">Riwayat voyage dan nilai CII berdasarkan data aktual.</p>
       </div>
-
       <div className="flex gap-2 mb-5">
         {ships.map((s) => (
           <button
@@ -64,7 +63,6 @@ export default function HistoriPage() {
           </button>
         ))}
       </div>
-
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         {loading ? (
           <div className="text-sm text-gray-400 py-8 text-center">Memuat data voyage...</div>
@@ -72,7 +70,7 @@ export default function HistoriPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
-                {["#", "Rute", "Kondisi", "Tanggal Selesai", "Jarak (nm)", "Sea Time (h)", "CII", "Rating"].map(
+                {["#", "Rute", "Kondisi", "Tanggal Selesai", "Jarak (nm)", "Sea Time", "CII", "Rating"].map(
                   (h) => (
                     <th
                       key={h}
@@ -106,7 +104,10 @@ export default function HistoriPage() {
                   <td className="px-4 py-3 text-right text-gray-500 text-xs">
                     {row.distance_nm?.toLocaleString()}
                   </td>
-                  <td className="px-4 py-3 text-right text-gray-500 text-xs">{row.sea_time_hours || "—"}</td>
+                  {/* [FIX] sea_time_days, bukan sea_time_hours yang tidak pernah di-select */}
+                  <td className="px-4 py-3 text-right text-gray-500 text-xs">
+                    {row.sea_time_days != null ? `${row.sea_time_days} hari` : "—"}
+                  </td>
                   <td className="px-4 py-3 text-right font-semibold text-gray-900 text-xs">
                     {row.cii_attained != null ? parseFloat(row.cii_attained).toFixed(2) : "—"}
                   </td>

@@ -1,4 +1,14 @@
 "use client"
+// components/RecommendationPanel.jsx — REVISI
+// ==============================================
+// [FIX #3] Tiap rekomendasi sekarang bisa membawa field `timeframe`
+// ('urgent' | 'menengah' | 'panjang') dan `etaLabel` (teks jangka
+// waktu spesifik) dari ciiCalculation.js — ditampilkan sebagai badge
+// urgensi terpisah dari badge prioritas, supaya terlihat lebih
+// meyakinkan sebagai decision-support system (bukan cuma status).
+// Backward compatible: kalau rec.timeframe tidak ada, badge urgensi
+// disembunyikan (tidak mempengaruhi pemakaian lama).
+
 import { CIIBadge } from "./CIIRatingCard"
 
 const priorityConfig = {
@@ -6,6 +16,25 @@ const priorityConfig = {
   medium: { border: "border-l-amber-500", bg: "bg-amber-50",  text: "text-amber-800",  label: "Prioritas Sedang" },
   low:    { border: "border-l-green-500", bg: "bg-green-50",  text: "text-green-800",  label: "Jangka Menengah" },
   info:   { border: "border-l-blue-400",  bg: "bg-blue-50",   text: "text-blue-800",   label: "Informasi" },
+}
+
+// [BARU] Badge urgensi — dimensi terpisah dari prioritas di atas.
+// Prioritas = seberapa penting; timeframe = seberapa segera.
+const timeframeConfig = {
+  urgent:   { icon: "🔴", cls: "bg-red-600 text-white" },
+  menengah: { icon: "🟡", cls: "bg-amber-500 text-white" },
+  panjang:  { icon: "🟢", cls: "bg-emerald-600 text-white" },
+}
+
+function TimeframeBadge({ timeframe, etaLabel }) {
+  const cfg = timeframeConfig[timeframe]
+  if (!cfg) return null
+  return (
+    <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${cfg.cls}`}>
+      <span>{cfg.icon}</span>
+      {etaLabel ?? timeframe}
+    </span>
+  )
 }
 
 export default function RecommendationPanel({ recommendations, predictedCII, predictedRating, currentCII, currentRating }) {
@@ -56,8 +85,22 @@ export default function RecommendationPanel({ recommendations, predictedCII, pre
           const cfg = priorityConfig[rec.priority] || priorityConfig["info"]
           return (
             <div key={rec.id || i} className={`border-l-4 ${cfg.border} rounded-r-lg px-4 py-3 ${cfg.bg} flex flex-col`}>
-              <div className={`text-sm font-medium mb-1.5 ${cfg.text}`}>{rec.title}</div>
+              <div className="flex items-start justify-between gap-2 mb-1.5">
+                <div className={`text-sm font-medium ${cfg.text}`}>{rec.title}</div>
+                <TimeframeBadge timeframe={rec.timeframe} etaLabel={rec.etaLabel} />
+              </div>
               <div className="text-xs text-gray-600 leading-relaxed flex-1">{rec.description}</div>
+              {/* [BARU] Dasar perhitungan — transparan, bisa dilihat pengguna */}
+              {Array.isArray(rec.basis) && rec.basis.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-black/5">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1">
+                    Dasar perhitungan
+                  </div>
+                  <ul className="text-[11px] text-gray-500 leading-relaxed space-y-0.5 list-disc list-inside">
+                    {rec.basis.map((b, bi) => <li key={bi}>{b}</li>)}
+                  </ul>
+                </div>
+              )}
               <div className="flex flex-wrap gap-1.5 mt-2.5">
                 <span className={`text-xs px-2 py-0.5 rounded-full bg-white border border-current border-opacity-20 ${cfg.text}`}>
                   {cfg.label}
@@ -79,4 +122,4 @@ export default function RecommendationPanel({ recommendations, predictedCII, pre
       </div>
     </div>
   )
-} 
+}

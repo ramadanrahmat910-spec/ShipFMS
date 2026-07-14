@@ -1,7 +1,14 @@
-// src/app/dashboard/rekomendasi/page.js
+// src/app/dashboard/rekomendasi/page.js — REVISI
+// =================================================
+// [FIX] Sekarang pakai DSS ENGINE penuh (AHP+SAW, lib/dss.js) — dua
+// panel konsisten dengan halaman Input: berbasis CII akumulasi resmi
+// IMO, dan berbasis CII voyage terisolasi.
+
 "use client"
-import { useEffect, useState } from "react"
-import RecommendationPanel from "@/components/RecommendationPanel"
+import { useEffect, useState, useMemo } from "react"
+import DSSPanel from "@/components/DSSPanel"
+import { runDSS } from "@/lib/dss"
+import { SIM_YEAR } from "@/lib/simulationClock"
 import Link from "next/link"
 
 export default function RekomendasiPage() {
@@ -17,6 +24,30 @@ export default function RekomendasiPage() {
       }
     }
   }, [])
+
+  const dssAccumulated = useMemo(() => {
+    if (!result) return null
+    const status = {
+      running_cii:      result.estimatedCII,
+      cii_required:     result.ciiRequired,
+      running_grade:    result.estimatedGrade,
+      distance_nm_ytd:  (result.baselineDistanceNM ?? 0) + result.distanceNM,
+      fuel_cons_mt_ytd: result.baselineFuelMT != null ? result.baselineFuelMT + result.fuelTon : null,
+    }
+    return runDSS({ shipKey: result.shipKey, status, avgSpeedKnot: result.avgSpeedKnot, year: SIM_YEAR })
+  }, [result])
+
+  const dssIsolated = useMemo(() => {
+    if (!result) return null
+    const status = {
+      running_cii:      result.isolatedCII,
+      cii_required:     result.ciiRequired,
+      running_grade:    result.isolatedGrade,
+      distance_nm_ytd:  result.distanceNM,
+      fuel_cons_mt_ytd: result.fuelTon,
+    }
+    return runDSS({ shipKey: result.shipKey, status, avgSpeedKnot: result.avgSpeedKnot, year: SIM_YEAR })
+  }, [result])
 
   return (
     <div className="p-6 w-full">
@@ -47,7 +78,7 @@ export default function RekomendasiPage() {
           </Link>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-5">
           {result.fuelComparison?.delta && (
             <div className="bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-3 flex items-center justify-between flex-wrap gap-2">
               <div>
@@ -66,17 +97,26 @@ export default function RekomendasiPage() {
             </div>
           )}
 
-          <RecommendationPanel
-            recommendations={
-              result.recommendation
-                ? result.recommendation.split(" | ")
-                : []
-            }
-            currentCII={result.estimatedCII}
-            currentRating={result.estimatedGrade}
-            predictedCII={null}
-            predictedRating={null}
-          />
+          {/* Dua panel DSS — konsisten dengan halaman Input */}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <div className="text-sm font-semibold text-gray-900">DSS — Perhitungan IMO (Akumulasi Tahunan)</div>
+              <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-full px-2 py-0.5">
+                Grade {result.estimatedGrade}
+              </span>
+            </div>
+            <DSSPanel dss={dssAccumulated} loading={false} />
+          </div>
+
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <div className="text-sm font-semibold text-gray-900">DSS — CII Voyage Terisolasi</div>
+              <span className="text-[10px] bg-purple-50 text-purple-700 border border-purple-100 rounded-full px-2 py-0.5">
+                Grade {result.isolatedGrade}
+              </span>
+            </div>
+            <DSSPanel dss={dssIsolated} loading={false} />
+          </div>
         </div>
       )}
     </div>

@@ -1,24 +1,33 @@
 "use client"
+// components/ShipOperationalCard.jsx — REVISI
+// ==============================================
+// [FIX #2] `data` di sini berasal dari v_ship_operational_daily, yang
+// TIDAK punya kolom from_port/to_port sama sekali (itu informasi per-
+// VOYAGE, bukan per-hari). Akibatnya fromPort/toPort selalu null dan
+// fallback lama selalu tampil, seolah "masih memproses". Perbaikannya
+// dilakukan di src/app/dashboard/page.js — komponen ini sekarang
+// menerima from_port/to_port yang SUDAH disuntikkan dari voyage aktif
+// pada tanggal virtual. Di sini kita cuma perjelas teks fallback:
+// kondisi "tidak ada voyage aktif" (kapal sandar) itu valid, bukan
+// kegagalan deteksi — jadi tidak lagi ditulis seolah masih berjalan.
+//
+// Menampilkan data operasional harian dari AIS:
+//   - Distance harian (NM)
+//   - Tujuan voyage (dari voyage aktif pada tanggal ini)
+//   - Speed rata-rata hari ini
+//   - Jenis BBM yang dipakai
+//
+// Props:
+//   data  {object} — dari v_ship_operational_daily / getCIIDailyByDate(),
+//         DENGAN from_port/to_port yang sudah disuntikkan pemanggil
+//         (lihat dashboard/page.js: dailyDataWithRoute)
+//   date  {string} — tanggal yang ditampilkan (YYYY-MM-DD)
 
 import { formatNum } from '@/lib/ciiCalculation'
 
-/**
- * ShipOperationalCard — kotak 1 dari 2 kotak baru (revisi dosen)
- *
- * Menampilkan data operasional harian dari AIS:
- *   - Distance harian (NM)
- *   - Tujuan voyage (dari koordinat + SOG)
- *   - Speed rata-rata hari ini
- *   - Jenis BBM yang dipakai
- *
- * Props:
- *   data  {object} — dari v_ship_operational_daily atau getCIIDailyByDate()
- *   date  {string} — tanggal yang ditampilkan (YYYY-MM-DD)
- */
 export default function ShipOperationalCard({ data, date }) {
   const hasData = !!data
-
-  const distanceDay   = data?.distance_nm_day ?? null
+  const distanceDay   = data?.distance_nm_day ?? data?.distance_nm ?? null
   const avgSpeed      = data?.avg_speed_knot  ?? null
   const fromPort      = data?.from_port        ?? null
   const toPort        = data?.to_port          ?? null
@@ -29,18 +38,19 @@ export default function ShipOperationalCard({ data, date }) {
     ? new Date(date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
     : '—'
 
-  // Tentukan tujuan voyage
+  // [FIX #2] Teks fallback yang jujur: tidak ada voyage aktif = kapal
+  // sandar, bukan "sedang dideteksi" (yang menyiratkan proses belum
+  // selesai / bug).
   const voyageRoute = fromPort && toPort
     ? `${fromPort} → ${toPort}`
     : toPort
     ? `→ ${toPort}`
     : fromPort
     ? `${fromPort} → —`
-    : 'Sedang dideteksi...'
+    : 'Kapal sedang sandar (tidak ada voyage aktif)'
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-5 h-full">
-
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div>
@@ -53,10 +63,8 @@ export default function ShipOperationalCard({ data, date }) {
           Harian
         </span>
       </div>
-
       {/* Konten */}
       <div className="flex flex-col gap-4">
-
         {/* Distance harian */}
         <div className="flex items-center justify-between py-2.5 border-b border-gray-50">
           <div className="flex items-center gap-2">
@@ -71,7 +79,6 @@ export default function ShipOperationalCard({ data, date }) {
             {distanceDay != null ? `${formatNum(distanceDay, 1)} NM` : '—'}
           </span>
         </div>
-
         {/* Tujuan voyage */}
         <div className="flex items-center justify-between py-2.5 border-b border-gray-50">
           <div className="flex items-center gap-2">
@@ -87,7 +94,6 @@ export default function ShipOperationalCard({ data, date }) {
             {voyageRoute}
           </span>
         </div>
-
         {/* Speed harian */}
         <div className="flex items-center justify-between py-2.5 border-b border-gray-50">
           <div className="flex items-center gap-2">
@@ -102,7 +108,6 @@ export default function ShipOperationalCard({ data, date }) {
             {avgSpeed != null ? `${formatNum(avgSpeed, 1)} knot` : '—'}
           </span>
         </div>
-
         {/* Jenis BBM */}
         <div className="flex items-center justify-between py-2.5">
           <div className="flex items-center gap-2">
@@ -117,16 +122,13 @@ export default function ShipOperationalCard({ data, date }) {
             {fuelType}
           </span>
         </div>
-
       </div>
-
       {/* Empty state */}
       {!hasData && (
         <div className="mt-3 text-xs text-gray-400 text-center py-2 bg-gray-50 rounded-lg">
           Data harian belum tersedia untuk tanggal ini
         </div>
       )}
-
     </div>
   )
 }

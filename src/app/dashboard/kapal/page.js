@@ -1,4 +1,19 @@
 "use client"
+// src/app/dashboard/kapal/page.js — REVISI
+// ==========================================
+// [FIX #1] Badge rating: dulu `s.rating || "C"` hardcode fallback ke "C".
+//          Sekarang badge netral "–" kalau rating tidak ada. (Kolom
+//          `rating` memang tidak pernah di-SELECT di getAllShips() —
+//          itu memang benar apa adanya karena rating per kapal berubah
+//          harian, bukan atribut statis kapal. Badge di grid kartu atas
+//          sekarang mengambil dari useShipCIIStatus() yang sama seperti
+//          kartu detail, bukan dari field ship yang tidak ada.)
+// [FIX #2] Field dari endpoint mode=status DIKONFIRMASI: getShipCurrentStatus()
+//          membaca view v_ship_current, field aslinya adalah
+//          running_cii / cii_required / running_grade (lihat ciiCalculation.js
+//          & db.js) — BUKAN actualCII/refCII yang ditebak versi sebelumnya.
+//          ship.cii_req juga tidak pernah ada di tabel ship; dihapus.
+
 import { useEffect, useState } from "react"
 import { getAllShips } from "@/lib/api"
 import { CIIBadge } from "@/components/CIIRatingCard"
@@ -14,27 +29,6 @@ function InfoRow({ label, value }) {
 
 // Parameter CII untuk kapal tanker (konstan dari Excel)
 const TANKER_CII_PARAMS = { a: 5247, c: 0.61, d1: 0.82, d2: 0.93, d3: 1.08, d4: 1.28 }
-
-// REVISI:
-// - Bug #1: `const r = s.rating || "C"` -- fallback hardcode "C" tiap kali
-//   `rating` undefined (mis. saat getAllShips() belum/tidak men-SELECT
-//   kolom rating). Sekarang: kalau tidak ada rating, badge tampil netral
-//   "–" (abu-abu), bukan pura-pura C. Root cause aslinya tetap harus
-//   dibenerin di lib/db.js -> getAllShips() supaya kolom `rating`
-//   benar-benar ke-select.
-// - Bug #2: card "Parameter CII" pakai `ship.cii_req` -- kolom itu TIDAK
-//   ADA di tabel `ship` (schema aktual cuma punya cii_param_a, cii_param_c,
-//   cii_ref_value). Akibatnya `undefined / ship.cii_ref_value * 100`
-//   menghasilkan NaN, jadi tampil "NaN% dari CII referensi". Sekarang
-//   diganti: ambil nilai attained & required CII LIVE dari endpoint
-//   `/api/ships/[shipKey]/cii?mode=status` (sumber yang sama dipakai
-//   dashboard utama), bukan dari kolom statis yang salah/tidak ada.
-//
-// CATATAN: field yang di-destructure dari hasil mode=status
-//   (actualCII/attainedCII, requiredCII/refCII, percentage/persentase, dst)
-//   saya tebak dari konvensi yang kita pakai di ciiCalculation.js.
-//   Kalau nama field asli di getShipCurrentStatus() beda, kabari saya
-//   biar disesuaikan persis -- saya belum lihat isi fungsi itu.
 
 function RatingBadge({ rating }) {
   if (!rating) {
@@ -70,19 +64,33 @@ function useShipCIIStatus(shipKey) {
 export default function KapalPage() {
   const [ships, setShips] = useState([])
   const [selectedKey, setSelectedKey] = useState("klasogun")
+  // [FIX #1] rating tiap kartu diambil live per-kapal, bukan dari s.rating yang tidak ada
+  const [gradeByShip, setGradeByShip] = useState({})
 
   useEffect(() => {
     getAllShips().then(setShips)
   }, [])
+
+  useEffect(() => {
+    if (ships.length === 0) return
+    Promise.all(
+      ships.map((s) =>
+        fetch(`/api/ships/${s.ship_key}/cii?mode=status`)
+          .then((r) => r.json())
+          .then((d) => [s.ship_key, d?.running_grade ?? null])
+          .catch(() => [s.ship_key, null])
+      )
+    ).then((entries) => setGradeByShip(Object.fromEntries(entries)))
+  }, [ships])
 
   const ship = ships.find((s) => s.ship_key === selectedKey)
   const { status: ciiStatus, loading: ciiLoading } = useShipCIIStatus(selectedKey)
 
   if (!ship) return <div className="p-6 text-sm text-gray-400">Memuat data kapal...</div>
 
-  // Sesuaikan nama field ini kalau bentuk response mode=status beda
-  const attainedCII = ciiStatus?.actualCII ?? ciiStatus?.attainedCII ?? null
-  const requiredCII = ciiStatus?.refCII ?? ciiStatus?.requiredCII ?? ship.cii_ref_value ?? null
+  // [FIX #2] field yang benar dari v_ship_current
+  const attainedCII = ciiStatus?.running_cii ?? null
+  const requiredCII = ciiStatus?.cii_required ?? ship.cii_ref_value ?? null
   const percentageToLimit =
     attainedCII != null && requiredCII
       ? ((attainedCII / requiredCII) * 100).toFixed(0)
@@ -115,7 +123,7 @@ export default function KapalPage() {
                 <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-sm font-bold text-blue-700">
                   {s.ship_key[0]?.toUpperCase()}
                 </div>
-                <RatingBadge rating={s.rating} />
+                <RatingBadge rating={gradeByShip[s.ship_key]} />
               </div>
               <div className="font-medium text-sm text-gray-900 mb-0.5">{s.name}</div>
               <div className="text-xs text-gray-400">
@@ -151,11 +159,11 @@ export default function KapalPage() {
               <InfoRow label="Bendera" value={ship.flag} />
               <InfoRow label="Pemilik" value={ship.owner} />
               <InfoRow label="Tahun bangun" value={ship.year_built} />
-              <InfoRow label="Gross Tonnage" value={`${ship.gross_tonnage?.toLocaleString()} GT`} />
-              <InfoRow label="DWT" value={`${ship.dwt?.toLocaleString()} DWT`} />
-              <InfoRow label="Panjang (LOA)" value={`${ship.length_m} m`} />
-              <InfoRow label="Lebar (B)" value={`${ship.beam_m} m`} />
-              <InfoRow label="Draft (T)" value={`${ship.draft_m} m`} />
+              <InfoRow label="Gross Tonnage" value={ship.gross_tonnage ? `${ship.gross_tonnage.toLocaleString()} GT` : null} />
+              <InfoRow label="DWT" value={ship.dwt ? `${ship.dwt.toLocaleString()} DWT` : null} />
+              <InfoRow label="Panjang (LOA)" value={ship.length_m ? `${ship.length_m} m` : null} />
+              <InfoRow label="Lebar (B)" value={ship.beam_m ? `${ship.beam_m} m` : null} />
+              <InfoRow label="Draft (T)" value={ship.draft_m ? `${ship.draft_m} m` : null} />
             </tbody>
           </table>
         </div>
@@ -167,8 +175,8 @@ export default function KapalPage() {
             <table className="w-full">
               <tbody>
                 <InfoRow label="Model ME" value={ship.main_engine} />
-                <InfoRow label="MCR" value={`${ship.mcr_kw?.toLocaleString()} kW`} />
-                <InfoRow label="Bahan bakar" value={(ship.fuel_types || []).join(", ")} />
+                <InfoRow label="MCR" value={ship.mcr_kw ? `${ship.mcr_kw.toLocaleString()} kW` : null} />
+                <InfoRow label="Bahan bakar" value={(ship.fuel_types || []).join(", ") || null} />
               </tbody>
             </table>
           </div>
@@ -191,8 +199,8 @@ export default function KapalPage() {
             ) : attainedCII != null && requiredCII ? (
               <>
                 <div className="flex items-baseline gap-2 mb-2">
-                  <span className="text-2xl font-semibold text-gray-900">{attainedCII}</span>
-                  <span className="text-sm text-gray-400">/ required {requiredCII}</span>
+                  <span className="text-2xl font-semibold text-gray-900">{Number(attainedCII).toFixed(3)}</span>
+                  <span className="text-sm text-gray-400">/ required {Number(requiredCII).toFixed(3)}</span>
                 </div>
                 <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                   <div

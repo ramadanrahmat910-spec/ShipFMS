@@ -1,15 +1,34 @@
 "use client"
-import { useEffect, useState, useCallback } from "react"
+// src/app/dashboard/page.js — REVISI
+// ===================================
+// Perubahan besar:
+//   1. Mode "LIVE (Simulasi Data 2025)": seluruh dashboard digerakkan
+//      jam virtual (SimulationProvider) — angka CII, BBM, jarak, dan
+//      posisi kapal berjalan mengikuti data 2025 secara realtime,
+//      bisa dipercepat lewat SimClockBar.
+//
+//   2. Peta baru (ShipMap rewrite): semua jalur voyage tampil,
+//      voyage aktif di-highlight, kedua kapal bergerak dengan ikon
+//      panah berotasi. Peta sekarang full-width sebagai elemen utama.
+//   3. [FIX] RecommendationPanel duplikat dihapus — pakai satu
+//      komponen dari @/components dengan format {priority,title,description}.
+
+import { useEffect, useState, useCallback, useMemo } from "react"
 import dynamic from "next/dynamic"
-import CIIRatingCard, { CIIBadge }          from "@/components/CIIRatingCard"
-import ShipOperationalCard                   from "@/components/ShipOperationalCard"
-import CIIDataCard                           from "@/components/CIIDataCard"
+import CIIRatingCard, { CIIBadge } from "@/components/CIIRatingCard"
+import ShipOperationalCard          from "@/components/ShipOperationalCard"
+import CIIDataCard                  from "@/components/CIIDataCard"
+import DSSPanel                     from "@/components/DSSPanel"
 import RunningCIIChart, {
   CumulativeDistanceChart,
   CumulativeFuelChart,
-}                                            from "@/components/RunningCIIChart"
-import { generateDashboardRecommendation, recommendationColor } from "@/lib/ciiCalculation"
-// ShipMap tetap dynamic (Leaflet tidak support SSR)
+}                                   from "@/components/RunningCIIChart"
+import SimulationProvider, { SimClockBar, useSimulation } from "@/components/SimulationProvider"
+import { calcPctOfRequired, calcCIIRequired } from "@/lib/ciiCalculation"
+import { runDSS } from "@/lib/dss"
+import { fractionOfDay } from "@/lib/simulationClock"
+
+// Leaflet tidak support SSR
 const ShipMap = dynamic(() => import("@/components/ShipMap"), { ssr: false })
 
 // ─── HELPERS ─────────────────────────────────────────────────
@@ -17,43 +36,35 @@ function MetricCard({ label, value, sub, subColor, children }) {
   return (
     <div className="bg-gray-50 rounded-xl px-4 py-4">
       <div className="text-xs text-gray-500 mb-1">{label}</div>
-      {children ?? <div className="text-xl font-semibold text-gray-900">{value}</div>}
+      {children ?? <div className="text-xl font-semibold text-gray-900 tabular-nums">{value}</div>}
       {sub && <div className={`text-xs mt-1 ${subColor ?? "text-gray-400"}`}>{sub}</div>}
     </div>
   )
 }
 
-function RecommendationPanel({ recommendations = [] }) {
-  if (!recommendations.length) return null
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="text-sm font-semibold text-gray-900">Rekomendasi Otomatis</div>
-      {recommendations.map((rec, i) => (
-        <div key={i} className={`border rounded-xl px-4 py-3 text-sm ${recommendationColor(rec.type)}`}>
-          {rec.title && <div className="font-semibold mb-0.5">{rec.title}</div>}
-          <div className="leading-relaxed">{rec.message}</div>
-        </div>
-      ))}
-    </div>
-  )
-}
+// ─── ISI DASHBOARD (di dalam SimulationProvider) ─────────────
+function DashboardContent() {
+  const { virtualTime, virtualDate } = useSimulation()
 
-// ─── MAIN PAGE ───────────────────────────────────────────────
-export default function DashboardPage() {
-  const [ships,           setShips]           = useState([])
-  const [shipGrades,      setShipGrades]      = useState({}) // { klasogun: 'A', balongan: 'C' } — rating asli per kapal utk switcher
-  const [selectedKey,     setSelectedKey]     = useState("klasogun")
-  const [selectedVoyageId,setSelectedVoyageId]= useState(null)
-  // Data dari API
-  const [dashData,        setDashData]        = useState(null)   // getDashboardData
-  const [voyages,         setVoyages]         = useState([])
-  const [voyageDetail,    setVoyageDetail]    = useState(null)
-  const [dailyData,       setDailyData]       = useState(null)   // ShipOperationalCard
-  // AIS
-  const [livePosition,    setLivePosition]    = useState(null)
-  const [gpsTrack,        setGPSTrack]        = useState([])
-  const [loading,         setLoading]         = useState(true)
-  const [loadingVoyage,   setLoadingVoyage]   = useState(false)
+  const [ships,            setShips]            = useState([])
+  const [shipGrades,       setShipGrades]       = useState({})
+  const [selectedKey,      setSelectedKey]      = useState("klasogun")
+  const [selectedVoyageId, setSelectedVoyageId] = useState(null)
+
+  const [dashData,  setDashData]  = useState(null)   // chart bulanan, cii_required, dsb (statis per kapal)
+  const [voyages,   setVoyages]   = useState([])
+  const [simStatus, setSimStatus] = useState(null)   // { today, prev } dari cii_daily pada tanggal virtual
+  const [dailyData, setDailyData] = useState(null)   // ShipOperationalCard pada tanggal virtual
+  const [loading,   setLoading]   = useState(true)
+
+  // [FIX #1] Detail voyage yang dipilih dari dropdown "Riwayat Perjalanan".
+  // Sebelumnya selectedVoyageId hanya dipakai untuk highlight/zoom peta —
+  // seluruh kartu CII/BBM/jarak tetap menampilkan data live (jam virtual),
+  // jadi terlihat seperti "tidak merespons" saat ganti voyage. Sekarang
+  // memilih voyage benar-benar mengambil & menampilkan data voyage itu.
+  const [voyageDetail,  setVoyageDetail]  = useState(null)
+  const [loadingVoyage, setLoadingVoyage] = useState(false)
+
   const year = 2025
 
   // ── Fetch ships (sekali) ──
@@ -63,49 +74,31 @@ export default function DashboardPage() {
       .then(d => setShips(d.ships ?? []))
   }, [])
 
-  // ── Fetch rating asli semua kapal (untuk badge di switcher atas) ──
-  // Dilakukan terpisah dari fetchDashboard, karena fetchDashboard hanya
-  // ambil detail lengkap utk kapal yang aktif dipilih. Tanpa ini, badge
-  // rating kapal lain di switcher tidak ada sumber datanya sama sekali
-  // dan akan selalu fallback ke nilai statis yang salah.
+  // ── Rating asli semua kapal untuk badge switcher ──
   useEffect(() => {
     if (ships.length === 0) return
     Promise.all(
       ships.map((s) =>
-        fetch(`/api/ships/${s.ship_key}/cii?mode=dashboard&year=${year}`)
+        fetch(`/api/ships/${s.ship_key}/cii?mode=status`)
           .then((r) => r.json())
-          .then((d) => [s.ship_key, d?.currentStatus?.running_grade ?? null])
+          .then((d) => [s.ship_key, d?.running_grade ?? null])
           .catch(() => [s.ship_key, null])
       )
-    ).then((entries) => {
-      setShipGrades(Object.fromEntries(entries))
-    })
-  }, [ships, year])
+    ).then((entries) => setShipGrades(Object.fromEntries(entries)))
+  }, [ships])
 
-  // ── Fetch semua data dashboard saat kapal berubah ──
-  const fetchDashboard = useCallback(async (shipKey) => {
+  // ── Data statis per kapal: chart & voyages ──
+  const fetchStatic = useCallback(async (shipKey) => {
     setLoading(true)
     try {
-      const [dashRes, voyageRes, aisLatest, aisTrack] = await Promise.all([
+      const [dashRes, voyageRes] = await Promise.all([
         fetch(`/api/ships/${shipKey}/cii?mode=dashboard&year=${year}`).then(r => r.json()),
         fetch(`/api/ships/${shipKey}/voyage?mode=list&limit=100`).then(r => r.json()),
-        fetch(`/api/ships/${shipKey}/ais?mode=latest`).then(r => r.json()),
-        fetch(`/api/ships/${shipKey}/ais?mode=track&date=${new Date().toISOString().split("T")[0]}`).then(r => r.json()),
       ])
       setDashData(dashRes)
       setVoyages(voyageRes.voyages ?? [])
-      setLivePosition(aisLatest.position ?? null)
-      setGPSTrack(aisTrack.track ?? [])
-      // Daily data untuk hari terakhir yang ada di cii_daily
-      const lastDate = dashRes?.currentStatus?.last_data_date
-      if (lastDate) {
-        const dailyRes = await fetch(
-          `/api/ships/${shipKey}/ais?mode=daily&date=${lastDate}`
-        ).then(r => r.json()).catch(() => null)
-        setDailyData(dailyRes ?? null)
-      }
     } catch (err) {
-      console.error("fetchDashboard error:", err)
+      console.error("fetchStatic error:", err)
     } finally {
       setLoading(false)
     }
@@ -113,56 +106,187 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setSelectedVoyageId(null)
-    setVoyageDetail(null)
-    fetchDashboard(selectedKey)
-  }, [selectedKey, fetchDashboard])
+    fetchStatic(selectedKey)
+  }, [selectedKey, fetchStatic])
 
-  // ── Fetch voyage detail saat pilih voyage ──
+  // ── Status CII pada TANGGAL VIRTUAL (di-refetch tiap ganti hari virtual) ──
   useEffect(() => {
-    if (!selectedVoyageId) {
-      setVoyageDetail(null)
-      return
-    }
-    setLoadingVoyage(true)
-    fetch(`/api/ships/voyages/${selectedVoyageId}`)
+    let cancelled = false
+    fetch(`/api/ships/${selectedKey}/sim?mode=status&at=${virtualDate}`)
       .then(r => r.json())
-      .then(d => setVoyageDetail(d ?? null))
-      .catch(() => setVoyageDetail(null))
-      .finally(() => setLoadingVoyage(false))
-  }, [selectedVoyageId])
+      .then(d => { if (!cancelled) setSimStatus(d) })
+      .catch(() => { if (!cancelled) setSimStatus(null) })
 
-  // ── Derived values ──
-  const ship          = ships.find(s => s.ship_key === selectedKey)
-  const currentStatus = dashData?.currentStatus   ?? null
-  const monthlyChart  = dashData?.monthlyChart    ?? []
-  const cumulative    = dashData?.cumulativeChart ?? []
-  const voyageCount   = dashData?.voyageCount     ?? []
-  // Nilai CII yang ditampilkan
-  const displayCII    = currentStatus?.running_cii    ?? null
-  const displayGrade  = currentStatus?.running_grade  ?? "—"
-  const ciiRequired   = currentStatus?.cii_required   ?? null
-  const ciiRef        = ship?.cii_ref_value            ?? null
-  const lastDate      = currentStatus?.last_data_date  ?? null
-  const dateLimitReached = currentStatus?.date_limit_reached ?? null
-  // Metric ringkasan
-  const distYTD       = currentStatus?.distance_nm_ytd   ?? null
-  const fuelYTD       = currentStatus?.fuel_cons_mt_ytd  ?? null
-  const co2YTD        = currentStatus?.co2_emission_g_ytd ?? null
-  // Speed rata-rata dari monthlyChart (bulan terakhir yang ada data)
-  const lastMonthData = [...monthlyChart].reverse().find(m => m.running_cii != null)
-  const avgSpeedDisplay = dailyData?.avg_speed_knot
-    ? `${dailyData.avg_speed_knot} kn`
-    : "—"
-  // Rekomendasi otomatis
-  const recommendations = currentStatus
-    ? generateDashboardRecommendation(currentStatus, selectedKey, year)
-    : []
-  // Sort voyages terbaru dulu
+    fetch(`/api/ships/${selectedKey}/ais?mode=daily&date=${virtualDate}`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setDailyData(d ?? null) })
+      .catch(() => { if (!cancelled) setDailyData(null) })
+
+    return () => { cancelled = true }
+  }, [selectedKey, virtualDate])
+
+  // [FIX #1] Fetch detail voyage spesifik saat dipilih dari dropdown.
+  useEffect(() => {
+    if (!selectedVoyageId) { setVoyageDetail(null); return }
+    let cancelled = false
+    setLoadingVoyage(true)
+    fetch(`/api/ships/${selectedKey}/voyages/${selectedVoyageId}`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setVoyageDetail(d?.voyage ?? null) })
+      .catch(() => { if (!cancelled) setVoyageDetail(null) })
+      .finally(() => { if (!cancelled) setLoadingVoyage(false) })
+    return () => { cancelled = true }
+  }, [selectedKey, selectedVoyageId])
+
+  // ── Interpolasi angka sepanjang hari virtual (jalan tiap detik) ──
+  const live = useMemo(() => {
+    const t = simStatus?.today
+    if (!t) return null
+
+    // Kalau data cii_daily untuk tanggal virtual persis ada → interpolasi
+    // dalam hari itu. Kalau baris terakhir < tanggal virtual (gap data),
+    // pakai nilai akhir hari (frac = 1).
+    const sameDay = t.date === virtualDate
+    const frac    = sameDay ? fractionOfDay(virtualTime) : 1
+
+    const baseDist = (t.distance_nm_ytd  ?? 0) - (sameDay ? (t.distance_nm_day  ?? 0) * (1 - frac) : 0)
+    const baseFuel = (t.fuel_cons_mt_ytd ?? 0) - (sameDay ? (t.fuel_cons_mt_day ?? 0) * (1 - frac) : 0)
+    const baseCO2  = (t.co2_emission_g_ytd ?? 0) - (sameDay ? (t.co2_emission_g_day ?? 0) * (1 - frac) : 0)
+
+    const prevCII = simStatus?.prev?.running_cii
+    const cii = (sameDay && prevCII != null && t.running_cii != null)
+      ? prevCII + (t.running_cii - prevCII) * frac
+      : t.running_cii
+
+    const transportWork = (t.transport_work_ytd ?? 0)
+
+    return {
+      running_cii:         cii,
+      running_grade:       t.running_grade,
+      cii_required:        t.cii_required,
+      distance_nm_ytd:     baseDist,
+      fuel_cons_mt_ytd:    baseFuel,
+      co2_emission_g_ytd:  baseCO2,
+      transport_work_ytd:  transportWork,
+      date_limit_reached:  t.date_limit_reached,
+      last_data_date:      t.date,
+      pct_of_required:     calcPctOfRequired(cii, t.cii_required),
+    }
+  }, [simStatus, virtualTime, virtualDate])
+
+  // ── Filter chart sampai bulan virtual (chart ikut "tumbuh") ──
+  // Catatan: grafik ini disembunyikan total saat mode "Detail Voyage"
+  // (lihat render di bawah), jadi filter di sini cukup berbasis jam
+  // virtual live saja — tidak perlu lagi membeku ke bulan voyage.
+  const vMonth = new Date(virtualTime).getMonth() + 1
+  const monthlyChart = useMemo(
+    () => (dashData?.monthlyChart ?? []).filter(m => m.month <= vMonth),
+    [dashData, vMonth]
+  )
+  const cumulative = useMemo(
+    () => (dashData?.cumulativeChart ?? []).filter(m => m.month <= vMonth),
+    [dashData, vMonth]
+  )
+
+  // [FIX #2] v_ship_operational_daily (sumber `dailyData`) TIDAK punya
+  // kolom from_port/to_port — itu informasi per-VOYAGE, bukan per-hari.
+  // Makanya ShipOperationalCard selalu jatuh ke "Sedang dideteksi...".
+  // Perbaikan: cari voyage yang aktif pada tanggal virtual dari daftar
+  // `voyages` yang sudah kita fetch, lalu suntikkan from_port/to_port-nya.
+  const activeVoyage = useMemo(() => {
+    const vTime = new Date(virtualDate).getTime()
+    return voyages.find(v => {
+      if (!v.date_departure) return false
+      const dep = new Date(v.date_departure).getTime()
+      const arr = v.date_arrived ? new Date(v.date_arrived).getTime() + 86399000 : dep + 86399000
+      return vTime >= dep && vTime <= arr
+    }) ?? null
+  }, [voyages, virtualDate])
+
+  const dailyDataWithRoute = dailyData ? {
+    ...dailyData,
+    from_port: dailyData.from_port ?? activeVoyage?.from_port ?? null,
+    to_port:   dailyData.to_port   ?? activeVoyage?.to_port   ?? null,
+  } : (activeVoyage ? { from_port: activeVoyage.from_port, to_port: activeVoyage.to_port } : null)
+
+  // ── Derived ──
+  const ship        = ships.find(s => s.ship_key === selectedKey)
+  const ciiRequired = live?.cii_required ?? dashData?.currentStatus?.cii_required ?? null
+  const ciiRef      = ship?.cii_ref_value ?? null
+
+  // [FIX #1] Saat sebuah voyage dipilih, SEMUA kartu (metric, rating,
+  // data CII, operasional) beralih menampilkan data voyage tersebut,
+  // bukan data live jam virtual lagi.
+  const viewingVoyage = Boolean(selectedVoyageId) && Boolean(voyageDetail)
+  const staticCIIRequired = useMemo(
+    () => calcCIIRequired(selectedKey, year),
+    [selectedKey, year]
+  )
+
+  const displayCII         = viewingVoyage ? voyageDetail.cii_attained : live?.running_cii
+  const displayGrade       = viewingVoyage ? voyageDetail.rating       : live?.running_grade
+  const displayCiiRequired = viewingVoyage ? staticCIIRequired         : ciiRequired
+  const displayDistance    = viewingVoyage ? voyageDetail.distance_nm  : live?.distance_nm_ytd
+  const displayFuel        = viewingVoyage
+    ? (
+        voyageDetail.fuel_cons_actual ??
+        voyageDetail.fuel_cons_mlr ??
+        // [FIX] fallback terakhir: kalau fuel_cons_actual & fuel_cons_mlr
+        // sama-sama NULL, coba jumlahkan fuel_me_ton + fuel_ae_ton (kolom
+        // BBM alternatif yang mungkin justru yang benar-benar terisi).
+        ((voyageDetail.fuel_me_ton != null || voyageDetail.fuel_ae_ton != null)
+          ? (voyageDetail.fuel_me_ton ?? 0) + (voyageDetail.fuel_ae_ton ?? 0)
+          : null)
+      )
+    : live?.fuel_cons_mt_ytd
+  const displaySpeed       = viewingVoyage ? voyageDetail.avg_speed_knots : dailyData?.avg_speed_knot
+  const displayLastDate    = viewingVoyage ? voyageDetail.date_arrived    : live?.last_data_date
+  const displayCO2Gram     = viewingVoyage
+    ? (voyageDetail.co2_emission_ton != null ? voyageDetail.co2_emission_ton * 1_000_000 : null)
+    : live?.co2_emission_g_ytd
+  const displayTransportWork = viewingVoyage
+    ? (voyageDetail.dwt && voyageDetail.distance_nm ? voyageDetail.dwt * voyageDetail.distance_nm : null)
+    : live?.transport_work_ytd
+
+  // [FIX] Rekomendasi sekarang pakai DSS ENGINE penuh (AHP + SAW, lihat
+  // lib/dss.js) di SEMUA konteks — live maupun voyage historis yang
+  // dipilih — bukan cuma live seperti sebelumnya. Untuk voyage historis,
+  // "status" yang disuntikkan ke DSS memakai data voyage itu SENDIRI
+  // (distance_nm/fuel voyage itu, bukan akumulasi tahunan), supaya
+  // diagnosis & skoring alternatif relevan dengan voyage spesifik itu.
+  const dss = useMemo(() => {
+    if (viewingVoyage && voyageDetail) {
+      const cii = voyageDetail.cii_attained != null ? Number(voyageDetail.cii_attained) : null
+      if (!cii) return null
+      const voyageStatus = {
+        running_cii:      cii,
+        cii_required:     staticCIIRequired,
+        running_grade:    voyageDetail.rating,
+        distance_nm_ytd:  voyageDetail.distance_nm,
+        fuel_cons_mt_ytd: displayFuel,   // sudah lewat fallback chain di atas
+      }
+      return runDSS({
+        shipKey: selectedKey,
+        status: voyageStatus,
+        avgSpeedKnot: voyageDetail.avg_speed_knots ?? null,
+        year,
+      })
+    }
+    if (!viewingVoyage && live) {
+      return runDSS({
+        shipKey: selectedKey,
+        status: live,
+        avgSpeedKnot: dailyData?.avg_speed_knot ?? null,
+        year,
+      })
+    }
+    return null
+  }, [viewingVoyage, voyageDetail, staticCIIRequired, displayFuel, live, selectedKey, dailyData, year])
+
   const sortedVoyages = [...voyages].sort((a, b) =>
     new Date(b.date_departure ?? 0) - new Date(a.date_departure ?? 0)
   )
 
-  // ─────────────────────────────────────────────────────────
   if (!ship && !loading) return (
     <div className="p-6 text-sm text-gray-400">Memuat data kapal...</div>
   )
@@ -175,23 +299,27 @@ export default function DashboardPage() {
           <h1 className="text-lg font-semibold text-gray-900">Dashboard CII</h1>
           <p className="text-sm text-gray-500 mt-0.5">
             {ship?.name ?? "..."} —{" "}
-            {selectedVoyageId ? "Detail Voyage" : "Live GPS Tracking"}
+            {viewingVoyage
+              ? `Detail Voyage: ${voyageDetail.from_port ?? "?"} → ${voyageDetail.to_port ?? "?"}`
+              : "Monitoring Realtime (Simulasi Data 2025)"}
           </p>
         </div>
-        {!selectedVoyageId && livePosition && (
-          <span className="text-xs px-3 py-1.5 bg-green-50 text-green-700 rounded-full border border-green-200">
-            🟢 Live GPS
-          </span>
+        {viewingVoyage && (
+          <button
+            onClick={() => setSelectedVoyageId(null)}
+            className="text-xs px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-full hover:bg-blue-100 transition-colors whitespace-nowrap"
+          >
+            ← Kembali ke Live
+          </button>
         )}
       </div>
+
+      {/* ── Jam virtual + kontrol kecepatan ── */}
+      <SimClockBar />
 
       {/* ── Pilih Kapal ── */}
       <div className="flex gap-3">
         {ships.map(s => {
-          // Rating asli diambil dari shipGrades (hasil fetch cii dashboard
-          // per kapal), BUKAN dari s.rating -- field itu tidak pernah ada
-          // di data ships (lihat getAllShips() di lib/db.js) dan dulu
-          // selalu fallback ke "C" secara keliru untuk semua kapal.
           const r = shipGrades[s.ship_key] ?? "—"
           const rColor = {
             A: "text-teal-700 bg-teal-50 border-teal-200",
@@ -225,7 +353,7 @@ export default function DashboardPage() {
         })}
       </div>
 
-      {/* ── Dropdown Voyage ── */}
+      {/* ── Dropdown Voyage (highlight jalur di peta) ── */}
       <div className="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-4 py-3">
         <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
           Riwayat Perjalanan:
@@ -235,7 +363,7 @@ export default function DashboardPage() {
           onChange={e => setSelectedVoyageId(e.target.value ? parseInt(e.target.value) : null)}
           className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white text-gray-900 focus:outline-none focus:border-blue-400"
         >
-          <option value="">📊 Semua Data (Ringkasan)</option>
+          <option value="">🛰 Ikuti pergerakan live (semua jalur)</option>
           {sortedVoyages.map(v => {
             const dep = v.date_departure
               ? new Date(v.date_departure).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })
@@ -247,99 +375,135 @@ export default function DashboardPage() {
             )
           })}
         </select>
-        {loadingVoyage && <span className="text-xs text-gray-400">Memuat...</span>}
       </div>
 
       {loading ? (
         <div className="text-sm text-gray-400 text-center py-8">Memuat data dashboard...</div>
       ) : (
         <>
-          {/* ── Metric Cards ── */}
+          {/* ── Metric Cards (live: bergerak tiap detik virtual; voyage: statis milik voyage terpilih) ── */}
           <div className="grid grid-cols-4 gap-3">
             <MetricCard
-              label="Nilai CII Saat Ini"
-              sub={`Target: < ${ciiRequired ? Number(ciiRequired).toFixed(2) : "—"}`}
+              label={viewingVoyage ? "Nilai CII Voyage Ini" : "Nilai CII Saat Ini"}
+              sub={`Target: < ${displayCiiRequired ? Number(displayCiiRequired).toFixed(2) : "—"}`}
             >
               <span className="flex items-baseline gap-2">
-                <span className="text-xl font-semibold text-gray-900">
-                  {displayCII ? Number(displayCII).toFixed(2) : "—"}
+                <span className="text-xl font-semibold text-gray-900 tabular-nums">
+                  {displayCII != null ? Number(displayCII).toFixed(3) : "—"}
                 </span>
-                {displayGrade !== "—" && <CIIBadge rating={displayGrade} size="sm" />}
+                {displayGrade && <CIIBadge rating={displayGrade} size="sm" />}
               </span>
             </MetricCard>
             <MetricCard
-              label="Konsumsi BBM"
-              value={fuelYTD ? `${Number(fuelYTD).toFixed(1)} MT` : "—"}
-              sub="akumulasi tahun 2025"
+              label={viewingVoyage ? "Konsumsi BBM Voyage" : "Konsumsi BBM (YTD)"}
+              value={displayFuel != null ? `${Number(displayFuel).toFixed(2)} MT` : "—"}
+              sub={viewingVoyage
+                ? (voyageDetail.fuel_type ?? "")
+                : `akumulasi s/d ${new Date(virtualTime).toLocaleDateString("id-ID", { day: "numeric", month: "short" })} ${year}`}
             />
             <MetricCard
-              label="Kecepatan"
-              value={avgSpeedDisplay}
-              sub="rata-rata harian dari AIS"
+              label={viewingVoyage ? "Kecepatan Voyage" : "Kecepatan"}
+              value={displaySpeed ? `${displaySpeed} kn` : "—"}
+              sub={viewingVoyage ? "rata-rata voyage ini" : "rata-rata harian dari AIS"}
             />
             <MetricCard
-              label="Total Jarak 2025"
-              value={distYTD ? `${Math.round(distYTD).toLocaleString("id-ID")} NM` : "—"}
-              sub={lastDate ? `Data per ${new Date(lastDate).toLocaleDateString("id-ID", { day: "numeric", month: "short" })}` : ""}
+              label={viewingVoyage ? "Jarak Voyage" : "Total Jarak (YTD)"}
+              value={displayDistance != null ? `${Math.round(displayDistance).toLocaleString("id-ID")} NM` : "—"}
+              sub={
+                viewingVoyage
+                  ? (voyageDetail.date_departure
+                      ? `Berangkat ${new Date(voyageDetail.date_departure).toLocaleDateString("id-ID", { day: "numeric", month: "short" })}`
+                      : "")
+                  : (displayLastDate ? `Data cii_daily per ${new Date(displayLastDate).toLocaleDateString("id-ID", { day: "numeric", month: "short" })}` : "")
+              }
             />
           </div>
 
-          {/* ── Grafik Utama: Running Annual CII ── */}
-          <RunningCIIChart
-            monthlyData={monthlyChart}
-            ciiRequired={ciiRequired}
-            year={year}
-            height={220}
+          {/* ── PETA (elemen utama, full width) ── */}
+          <ShipMap
+            ships={ships}
+            selectedKey={selectedKey}
+            onSelectShip={setSelectedKey}
+            focusVoyageId={selectedVoyageId}
           />
 
-          {/* ── Grafik Kumulatif: Distance + Fuel ── */}
-          <div className="grid grid-cols-2 gap-4">
-            <CumulativeDistanceChart data={cumulative} year={year} height={160} />
-            <CumulativeFuelChart     data={cumulative} year={year} height={160} />
-          </div>
+          {/* ── Grafik Utama & Kumulatif — HANYA saat mode Live, disembunyikan
+               saat sedang melihat voyage historis karena kurang relevan
+               (grafik ini bicara akumulasi tahunan, bukan satu voyage). ── */}
+          {!viewingVoyage && (
+            <>
+              <RunningCIIChart
+                monthlyData={monthlyChart}
+                ciiRequired={displayCiiRequired}
+                year={year}
+                height={220}
+              />
+              <div className="grid grid-cols-2 gap-4">
+                <CumulativeDistanceChart data={cumulative} year={year} height={160} />
+                <CumulativeFuelChart     data={cumulative} year={year} height={160} />
+              </div>
+            </>
+          )}
 
-          {/* ── Peta + Rating CII ── */}
-          <div className="grid grid-cols-2 gap-4">
-            <ShipMap
-              from={voyageDetail?.from_port ?? livePosition?.from_port ?? ""}
-              to={voyageDetail?.to_port     ?? livePosition?.to_port   ?? ""}
-              shipLabel={ship?.name ?? ""}
-              gpsTrack={gpsTrack}
-              isRealTime={!selectedVoyageId}
-            />
+          {/* ── Rating CII + Operasional + Data CII ── */}
+          <div className="grid grid-cols-3 gap-4">
             <CIIRatingCard
               cii={displayCII}
-              rating={displayGrade}
-              ciiRequired={ciiRequired}
+              rating={displayGrade ?? "—"}
+              ciiRequired={displayCiiRequired}
               refValue={ciiRef}
-              lastDate={lastDate}
+              lastDate={displayLastDate}
               shipKey={selectedKey}
               year={year}
-              dateLimitReached={dateLimitReached}
+              dateLimitReached={viewingVoyage ? null : live?.date_limit_reached}
             />
-          </div>
-
-          {/* ── 2 Kotak Baru: Ship Operational + CII Data ── */}
-          <div className="grid grid-cols-2 gap-4">
             <ShipOperationalCard
-              data={dailyData}
-              date={lastDate}
+              data={viewingVoyage ? {
+                avg_speed_knot: voyageDetail.avg_speed_knots,
+                from_port:      voyageDetail.from_port,
+                to_port:        voyageDetail.to_port,
+                sail_condition: voyageDetail.sail_condition,
+                distance_nm:    voyageDetail.distance_nm,
+              } : dailyDataWithRoute}
+              date={viewingVoyage ? voyageDetail.date_departure : virtualDate}
             />
             <CIIDataCard
-              data={currentStatus ? {
-                distance_nm_annual:    currentStatus.distance_nm_ytd,
-                fuel_cons_mt_annual:   currentStatus.fuel_cons_mt_ytd,
-                co2_emission_g_annual: currentStatus.co2_emission_g_ytd,
-                transport_work_annual: currentStatus.transport_work_ytd,
+              title={viewingVoyage ? "Data Voyage Terpilih" : undefined}
+              badgeLabel={viewingVoyage ? "Per Voyage" : undefined}
+              periodText={viewingVoyage
+                ? `${voyageDetail.from_port ?? "?"} → ${voyageDetail.to_port ?? "?"}`
+                : undefined}
+              data={(viewingVoyage || live) ? {
+                distance_nm_annual:    displayDistance,
+                fuel_cons_mt_annual:   displayFuel,
+                co2_emission_g_annual: displayCO2Gram,
+                transport_work_annual: displayTransportWork,
               } : null}
               year={year}
             />
           </div>
+          {loadingVoyage && (
+            <div className="text-xs text-gray-400 -mt-3">Memuat detail voyage...</div>
+          )}
 
-          {/* ── Rekomendasi Otomatis ── */}
-          <RecommendationPanel recommendations={recommendations} />
+          {/* ── Rekomendasi: DSS penuh (AHP+SAW) — live maupun voyage historis ── */}
+          <div>
+            <div className="text-sm font-semibold text-gray-900 mb-3">
+              {viewingVoyage ? "Decision Support System — Voyage Terpilih" : "Decision Support System — Rekomendasi Operasional"}
+            </div>
+            <DSSPanel dss={dss} loading={viewingVoyage ? loadingVoyage : !live} />
+          </div>
         </>
       )}
     </div>
+  )
+}
+
+// ─── PAGE ────────────────────────────────────────────────────
+export default function DashboardPage() {
+  return (
+    <SimulationProvider initialSpeed={60}>
+      <DashboardContent />
+    </SimulationProvider>
   )
 }
