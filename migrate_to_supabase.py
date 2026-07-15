@@ -33,15 +33,15 @@ LOCAL_DB = {
     "port":     5432,
     "database": "ship_cii_database",
     "user":     "postgres",
-    "password": "112233",
+    "password": "12345678",
 }
 
 SUPABASE_DB = {
-    "host":     "aws-1-ap-south-1.pooler.supabase.com",
+    "host":     "db.bxmwgsvpixbkhpxbpbbx.supabase.co",
     "port":     5432,
     "database": "postgres",
-    "user":     "postgres.qjqpepkgjfpbbwnvzuts",
-    "password": "TArahmat77!",
+    "user":     "postgres",
+    "password": "Sayang271102<3",
     "sslmode":  "require",
     "connect_timeout": 30,
 }

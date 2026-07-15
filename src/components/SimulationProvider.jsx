@@ -42,11 +42,26 @@ export default function SimulationProvider({ children, initialSpeed = 60 }) {
   const [playing, setPlayingState] = useState(true)
   const [virtualTime, setVirtualTime] = useState(anchorRef.current.virtualMs)
 
+  // State untuk mode Realtime
+  const [isRealtimeMode, setIsRealtimeModeState] = useState(false)
+  const modeRef = useRef(false)
+  
   const getVirtualNow = useCallback(() => {
+    if (modeRef.current) return Date.now()
+
     const a = anchorRef.current
     if (!a.playing) return a.virtualMs
     return clampToSimYear(a.virtualMs + (Date.now() - a.realMs) * a.speed)
   }, [])
+
+  const setIsRealtimeMode = useCallback((val) => {
+    modeRef.current = val
+    setIsRealtimeModeState(val)
+    if (!val) {
+      anchorRef.current.realMs = Date.now()
+    }
+    setVirtualTime(val ? Date.now() : getVirtualNow())
+  }, [getVirtualNow])
 
   // Rebase anchor setiap kali speed / playing berubah,
   // supaya waktu virtual tidak melompat.
@@ -77,10 +92,11 @@ export default function SimulationProvider({ children, initialSpeed = 60 }) {
 
   const value = {
     virtualTime,
-    virtualDate: toDateStr(virtualTime),
+    virtualDate: isRealtimeMode ? new Date(virtualTime).toISOString().split('T')[0] : toDateStr(virtualTime),
     getVirtualNow,
     speed, setSpeed,
     playing, setPlaying,
+    isRealtimeMode, setIsRealtimeMode,
   }
 
   return (
@@ -94,7 +110,7 @@ export default function SimulationProvider({ children, initialSpeed = 60 }) {
 // Badge "LIVE (Simulasi 2025)" + jam virtual + play/pause + kecepatan.
 
 export function SimClockBar() {
-  const { virtualTime, speed, setSpeed, playing, setPlaying } = useSimulation()
+  const { virtualTime, speed, setSpeed, playing, setPlaying, isRealtimeMode, setIsRealtimeMode } = useSimulation()
 
   // [FIX] Hydration mismatch: Date.now()-derived text di-render sekali
   // di server, lalu di-hydrate di browser sepersekian detik kemudian —
@@ -116,11 +132,19 @@ export function SimClockBar() {
 
   return (
     <div className="flex items-center gap-3 flex-wrap bg-slate-900 text-white rounded-xl px-4 py-2.5">
-      {/* Badge live */}
-      <span className="inline-flex items-center gap-1.5 text-xs font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded-full px-2.5 py-1">
-        <span className={`w-1.5 h-1.5 rounded-full bg-emerald-400 ${playing ? "animate-pulse" : ""}`} />
-        LIVE · Simulasi Data 2025
-      </span>
+      {/* Tombol Toggle Mode */}
+      <button
+        onClick={() => setIsRealtimeMode(!isRealtimeMode)}
+        className={`inline-flex items-center gap-1.5 text-xs font-medium rounded-full px-2.5 py-1 transition-colors ${
+          isRealtimeMode 
+            ? "bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25" 
+            : "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25"
+        }`}
+        title="Klik untuk beralih antara Mode Realtime dan Mode Simulasi Historis"
+      >
+        <span className={`w-1.5 h-1.5 rounded-full ${isRealtimeMode ? "bg-red-400 animate-pulse" : "bg-emerald-400"} ${!isRealtimeMode && playing ? "animate-pulse" : ""}`} />
+        {isRealtimeMode ? "LIVE · Data Sensor Realtime" : "LIVE · Simulasi Data 2025"}
+      </button>
 
       {/* Jam virtual */}
       <div className="text-sm font-mono tabular-nums">
@@ -131,36 +155,41 @@ export function SimClockBar() {
 
       <div className="flex-1" />
 
-      {/* Play / pause */}
-      <button
-        onClick={() => setPlaying(!playing)}
-        className="text-xs px-2.5 py-1 rounded-lg bg-slate-700 hover:bg-slate-600 transition-colors"
-        title={playing ? "Jeda simulasi" : "Jalankan simulasi"}
-      >
-        {playing ? "⏸ Jeda" : "▶ Jalan"}
-      </button>
-
-      {/* Kecepatan */}
-      <div className="flex items-center gap-1">
-        {[
-          { value: 1,    label: "1×"   },
-          { value: 60,   label: "60×"  },
-          { value: 600,  label: "600×" },
-          { value: 3600, label: "3600×" },
-        ].map(opt => (
+      {/* Kontrol hanya muncul jika dalam mode simulasi */}
+      {!isRealtimeMode && (
+        <>
+          {/* Play / pause */}
           <button
-            key={opt.value}
-            onClick={() => setSpeed(opt.value)}
-            className={`text-xs px-2 py-1 rounded-lg transition-colors ${
-              speed === opt.value
-                ? "bg-emerald-500 text-white font-semibold"
-                : "bg-slate-700 text-slate-300 hover:bg-slate-600"
-            }`}
+            onClick={() => setPlaying(!playing)}
+            className="text-xs px-2.5 py-1 rounded-lg bg-slate-700 hover:bg-slate-600 transition-colors"
+            title={playing ? "Jeda simulasi" : "Jalankan simulasi"}
           >
-            {opt.label}
+            {playing ? "⏸ Jeda" : "▶ Jalan"}
           </button>
-        ))}
-      </div>
+
+          {/* Kecepatan */}
+          <div className="flex items-center gap-1">
+            {[
+              { value: 1,    label: "1×"   },
+              { value: 60,   label: "60×"  },
+              { value: 600,  label: "600×" },
+              { value: 3600, label: "3600×" },
+            ].map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setSpeed(opt.value)}
+                className={`text-xs px-2 py-1 rounded-lg transition-colors ${
+                  speed === opt.value
+                    ? "bg-emerald-500 text-white font-semibold"
+                    : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }

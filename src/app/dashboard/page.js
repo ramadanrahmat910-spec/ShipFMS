@@ -44,7 +44,7 @@ function MetricCard({ label, value, sub, subColor, children }) {
 
 // ─── ISI DASHBOARD (di dalam SimulationProvider) ─────────────
 function DashboardContent() {
-  const { virtualTime, virtualDate } = useSimulation()
+  const { virtualTime, virtualDate, isRealtimeMode } = useSimulation()
 
   const [ships,            setShips]            = useState([])
   const [shipGrades,       setShipGrades]       = useState({})
@@ -109,21 +109,34 @@ function DashboardContent() {
     fetchStatic(selectedKey)
   }, [selectedKey, fetchStatic])
 
-  // ── Status CII pada TANGGAL VIRTUAL (di-refetch tiap ganti hari virtual) ──
+  // ── Status CII pada TANGGAL VIRTUAL (di-refetch tiap ganti hari virtual, atau tiap 5 detik jika Realtime) ──
   useEffect(() => {
     let cancelled = false
-    fetch(`/api/ships/${selectedKey}/sim?mode=status&at=${virtualDate}`)
-      .then(r => r.json())
-      .then(d => { if (!cancelled) setSimStatus(d) })
-      .catch(() => { if (!cancelled) setSimStatus(null) })
 
-    fetch(`/api/ships/${selectedKey}/ais?mode=daily&date=${virtualDate}`)
-      .then(r => r.json())
-      .then(d => { if (!cancelled) setDailyData(d ?? null) })
-      .catch(() => { if (!cancelled) setDailyData(null) })
+    const fetchData = () => {
+      fetch(`/api/ships/${selectedKey}/sim?mode=status&at=${virtualDate}`)
+        .then(r => r.json())
+        .then(d => { if (!cancelled) setSimStatus(d) })
+        .catch(() => { if (!cancelled) setSimStatus(null) })
 
-    return () => { cancelled = true }
-  }, [selectedKey, virtualDate])
+      fetch(`/api/ships/${selectedKey}/ais?mode=daily&date=${virtualDate}`)
+        .then(r => r.json())
+        .then(d => { if (!cancelled) setDailyData(d ?? null) })
+        .catch(() => { if (!cancelled) setDailyData(null) })
+    }
+
+    fetchData()
+
+    let intervalId = null
+    if (isRealtimeMode) {
+      intervalId = setInterval(fetchData, 5000)
+    }
+
+    return () => {
+      cancelled = true
+      if (intervalId) clearInterval(intervalId)
+    }
+  }, [selectedKey, virtualDate, isRealtimeMode])
 
   // [FIX #1] Fetch detail voyage spesifik saat dipilih dari dropdown.
   useEffect(() => {

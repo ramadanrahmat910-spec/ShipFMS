@@ -49,11 +49,11 @@ export const DSS_CONSISTENCY_RATIO = 0.04
 
 // ─── 2. ALTERNATIF ─────────────────────────────────────────────
 export const DSS_ALTERNATIVES = {
-  A1: { label: 'Slow Steaming',                    desc: 'Menurunkan kecepatan rata-rata operasional' },
-  A2: { label: 'Voyage Optimization',              desc: 'Optimasi rute & jadwal pelayaran' },
-  A3: { label: 'Trim & Ballast Optimization',      desc: 'Optimasi trim/ballast untuk kurangi hambatan' },
-  A4: { label: 'Penggunaan Bahan Bakar B50',       desc: 'Beralih dari B35 ke B50 (Cf lebih rendah)' },
-  A5: { label: 'Technical Inspection',             desc: 'Inspeksi teknis mesin & lambung (jika optimasi operasional belum cukup)' },
+  A1: { label: 'Slow Steaming',                    desc: 'Menurunkan kecepatan operasional kapal sebanyak 1-2 knot. Karena konsumsi bahan bakar berbanding lurus dengan pangkat tiga dari kecepatan, penurunan kecepatan sedikit saja akan sangat menghemat BBM.' },
+  A2: { label: 'Voyage Optimization',              desc: 'Mengubah rute untuk menghindari cuaca buruk (weather routing) dan menyesuaikan jadwal kedatangan (just-in-time arrival) untuk menghindari waktu tunggu berlebih di pelabuhan.' },
+  A3: { label: 'Trim & Ballast Optimization',      desc: 'Menyesuaikan distribusi beban muatan dan air ballast agar keseimbangan (trim) kapal optimal, sehingga mengurangi hambatan hidrodinamis saat berlayar.' },
+  A4: { label: 'Penggunaan Bahan Bakar B50',       desc: 'Beralih ke bahan bakar B50. Kandungan biofuel yang lebih tinggi memiliki faktor emisi (Cf) yang lebih rendah dibanding B35, sehingga otomatis langsung menurunkan nilai emisi karbon.' },
+  A5: { label: 'Technical Inspection',             desc: 'Melakukan inspeksi dan perawatan fisik seperti pembersihan lambung (hull cleaning) dari bio-fouling atau perbaikan propeller untuk memulihkan efisiensi propulsi kapal.' },
 }
 
 // Skor referensi TETAP (C2–C5) — dari literatur/domain, bukan data kapal.
