@@ -26,7 +26,8 @@ import RunningCIIChart, {
 import SimulationProvider, { SimClockBar, useSimulation } from "@/components/SimulationProvider"
 import { calcPctOfRequired, calcCIIRequired } from "@/lib/ciiCalculation"
 import { runDSS } from "@/lib/dss"
-import { fractionOfDay } from "@/lib/simulationClock"
+import { fractionOfDay, displayYear, formatDbDateDisplay } from "@/lib/simulationClock"
+import { useAisItsStream } from "@/lib/useAisItsStream"
 
 // Leaflet tidak support SSR
 const ShipMap = dynamic(() => import("@/components/ShipMap"), { ssr: false })
@@ -45,6 +46,11 @@ function MetricCard({ label, value, sub, subColor, children }) {
 // ─── ISI DASHBOARD (di dalam SimulationProvider) ─────────────
 function DashboardContent() {
   const { virtualTime, virtualDate, isRealtimeMode } = useSimulation()
+
+  // [BARU] Stream posisi kapal realtime via WebSocket AIS ITS.
+  // Aktif selama komponen hidup; kalau URL/API key belum di-set (.env),
+  // hook aman — status 'unconfigured', tidak konek, peta pakai simulasi.
+  const { positions: livePositions, status: wsStatus } = useAisItsStream(true)
 
   const [ships,            setShips]            = useState([])
   const [shipGrades,       setShipGrades]       = useState({})
@@ -314,7 +320,7 @@ function DashboardContent() {
             {ship?.name ?? "..."} —{" "}
             {viewingVoyage
               ? `Detail Voyage: ${voyageDetail.from_port ?? "?"} → ${voyageDetail.to_port ?? "?"}`
-              : "Monitoring Realtime (Simulasi Data 2025)"}
+              : `Monitoring Realtime (Simulasi Data ${displayYear(selectedKey)})`}
           </p>
         </div>
         {viewingVoyage && (
@@ -328,7 +334,7 @@ function DashboardContent() {
       </div>
 
       {/* ── Jam virtual + kontrol kecepatan ── */}
-      <SimClockBar />
+      <SimClockBar shipKey={selectedKey} />
 
       {/* ── Pilih Kapal ── */}
       <div className="flex gap-3">
@@ -379,7 +385,7 @@ function DashboardContent() {
           <option value="">🛰 Ikuti pergerakan live (semua jalur)</option>
           {sortedVoyages.map(v => {
             const dep = v.date_departure
-              ? new Date(v.date_departure).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })
+              ? formatDbDateDisplay(v.date_departure, selectedKey, { day: "numeric", month: "short", year: "numeric" })
               : "?"
             return (
               <option key={v.id} value={v.id}>
@@ -412,7 +418,7 @@ function DashboardContent() {
               value={displayFuel != null ? `${Number(displayFuel).toFixed(2)} MT` : "—"}
               sub={viewingVoyage
                 ? (voyageDetail.fuel_type ?? "")
-                : `akumulasi s/d ${new Date(virtualTime).toLocaleDateString("id-ID", { day: "numeric", month: "short" })} ${year}`}
+                : `akumulasi s/d ${formatDbDateDisplay(virtualTime, selectedKey, { day: "numeric", month: "short", year: "numeric" })}`}
             />
             <MetricCard
               label={viewingVoyage ? "Kecepatan Voyage" : "Kecepatan"}
@@ -425,9 +431,9 @@ function DashboardContent() {
               sub={
                 viewingVoyage
                   ? (voyageDetail.date_departure
-                      ? `Berangkat ${new Date(voyageDetail.date_departure).toLocaleDateString("id-ID", { day: "numeric", month: "short" })}`
+                      ? `Berangkat ${formatDbDateDisplay(voyageDetail.date_departure, selectedKey, { day: "numeric", month: "short" })}`
                       : "")
-                  : (displayLastDate ? `Data cii_daily per ${new Date(displayLastDate).toLocaleDateString("id-ID", { day: "numeric", month: "short" })}` : "")
+                  : (displayLastDate ? `Data cii_daily per ${formatDbDateDisplay(displayLastDate, selectedKey, { day: "numeric", month: "short" })}` : "")
               }
             />
           </div>
@@ -438,6 +444,7 @@ function DashboardContent() {
             selectedKey={selectedKey}
             onSelectShip={setSelectedKey}
             focusVoyageId={selectedVoyageId}
+            livePositions={livePositions}
           />
 
           {/* ── Grafik Utama & Kumulatif — HANYA saat mode Live, disembunyikan
@@ -479,6 +486,7 @@ function DashboardContent() {
                 distance_nm:    voyageDetail.distance_nm,
               } : dailyDataWithRoute}
               date={viewingVoyage ? voyageDetail.date_departure : virtualDate}
+              shipKey={selectedKey}
             />
             <CIIDataCard
               title={viewingVoyage ? "Data Voyage Terpilih" : undefined}

@@ -276,6 +276,14 @@ export async function getVoyageRoutesSampled(shipKey, maxPerVoyage = 300) {
   ])
   const rows = throwIfError(rpcRes, 'voyage_routes_sampled')
 
+  // [FIX] Urutkan baris secara kronologis agar garis di peta tidak acak-acakan (zigzag)
+  // RPC terkadang mengembalikan data tanpa jaminan urutan (tergantung plan PostgreSQL).
+  if (rows.length > 0 && rows[0].base_datetime) {
+    rows.sort((a, b) => new Date(a.base_datetime) - new Date(b.base_datetime))
+  } else if (rows.length > 0 && rows[0].id) {
+    rows.sort((a, b) => a.id - b.id)
+  }
+
   // [FIX] Supabase/PostgREST kadang mengembalikan kolom numeric/double
   // sebagai STRING (untuk menjaga presisi), atau ada baris dengan lat/lon
   // di luar rentang valid. Tanpa validasi ini, koordinat rusak (NaN/null)
@@ -288,7 +296,7 @@ export async function getVoyageRoutesSampled(shipKey, maxPerVoyage = 300) {
     return [la, lo]
   }
 
-  // Kelompokkan titik per voyage_id, sekaligus validasi & buang duplikat berurutan
+  // Kelompokkan titik per voyage_id, sekaligus validasi, buang duplikat, dan buang anomali GPS (teleport)
   const tracks = {}
   for (const r of rows) {
     const pt = toValidLatLon(r.lat, r.lon)
@@ -296,7 +304,23 @@ export async function getVoyageRoutesSampled(shipKey, maxPerVoyage = 300) {
     if (!tracks[r.voyage_id]) tracks[r.voyage_id] = []
     const arr = tracks[r.voyage_id]
     const last = arr[arr.length - 1]
-    if (!last || last[0] !== pt[0] || last[1] !== pt[1]) arr.push(pt)
+    
+    const timeMs = r.base_datetime ? new Date(r.base_datetime).getTime() : 0;
+
+    // Filter anomali GPS (zigzag/teleport): jika kecepatan melebihi 20 knots, abaikan titik ini.
+    // (Kapal tanker/kargo umumnya berjalan < 15 knots, kecepatan > 20 knots hampir pasti error GPS)
+    if (last && timeMs && last[2]) {
+      const distNm = haversineNM(last[0], last[1], pt[0], pt[1]);
+      const hours = (timeMs - last[2]) / 3600000;
+      if (hours > 0 && (distNm / hours) > 20) {
+        continue; // Lewati titik yang terlalu jauh dalam waktu terlalu singkat
+      }
+    }
+
+    if (!last || last[0] !== pt[0] || last[1] !== pt[1]) {
+      // Simpan koordinat dan waktu (waktu disimpan sementara di index 2 untuk filter, Leaflet hanya pakai [0,1])
+      arr.push([pt[0], pt[1], timeMs])
+    }
   }
 
   return voyages.map(v => {

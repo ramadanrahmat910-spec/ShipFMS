@@ -9,6 +9,69 @@
 
 export const SIM_YEAR = 2025
 
+// ─── DISPLAY-ONLY YEAR OFFSET (PER KAPAL) ─────────────────────
+// Data backbone tetap 2025 (SIM_YEAR) — SEMUA query & kalkulasi CII
+// WAJIB pakai 2025 karena datanya memang di situ, dan REDUCTION_FACTORS
+// beda antar tahun (2025=0.09, 2026=0.11) sehingga menggeser tahun di
+// logika akan mengubah grade CII secara keliru.
+//
+// Sesuai instruksi: HANYA kapal "balongan" yang tanggalnya digeser +1
+// tahun di UI (2025 → 2026), supaya webpage terlihat current date 2026
+// meski backbone-nya 2025. Klasogun TIDAK digeser — nanti tanggalnya
+// datang asli dari streaming AIS ITS (yang memang 2026), jadi offset 0.
+// Aturan: "2025 untuk query & kalkulasi, 2026 hanya untuk tampilan Balongan."
+export const DISPLAY_YEAR_OFFSET_BY_SHIP = {
+  balongan: 1,
+  klasogun: 0,
+}
+
+/** Offset tahun tampilan untuk sebuah kapal (default 0 = tidak digeser). */
+export function displayOffsetFor(shipKey) {
+  return DISPLAY_YEAR_OFFSET_BY_SHIP[shipKey] ?? 0
+}
+
+/**
+ * Geser sebuah waktu virtual (ms) ke tahun tampilan (+offset kapal), TANPA
+ * mengubah tanggal/jam. Dipakai HANYA untuk memformat string yang
+ * ditampilkan ke pengguna — JANGAN dipakai untuk query database.
+ */
+export function toDisplayMs(vMs, shipKey) {
+  const offset = displayOffsetFor(shipKey)
+  if (offset === 0) return vMs
+  const d = new Date(vMs)
+  return new Date(
+    d.getFullYear() + offset, d.getMonth(), d.getDate(),
+    d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds()
+  ).getTime()
+}
+
+/**
+ * Format tanggal virtual untuk DITAMPILKAN (sudah +offset kapal).
+ */
+export function formatDisplayDate(vMs, shipKey, opts = { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }, locale = 'id-ID') {
+  return new Date(toDisplayMs(vMs, shipKey)).toLocaleDateString(locale, opts)
+}
+
+/**
+ * Label tahun tampilan untuk sebuah kapal (mis. balongan → 2026,
+ * klasogun → 2025). Untuk header/badge.
+ */
+export function displayYear(shipKey, backboneYear = SIM_YEAR) {
+  return backboneYear + displayOffsetFor(shipKey)
+}
+
+/**
+ * Format tanggal DARI DATABASE (string 'YYYY-MM-DD' / Date) untuk
+ * DITAMPILKAN dengan tahun +offset kapal. Backbone DB tetap 2025.
+ * '—' jika input kosong/invalid.
+ */
+export function formatDbDateDisplay(dbDate, shipKey, opts = { day: 'numeric', month: 'short', year: 'numeric' }, locale = 'id-ID') {
+  if (dbDate == null || dbDate === '') return '—'
+  const parsed = new Date(dbDate)
+  if (isNaN(parsed.getTime())) return '—'
+  return new Date(toDisplayMs(parsed.getTime(), shipKey)).toLocaleDateString(locale, opts)
+}
+
 export const SIM_START_MS = new Date(SIM_YEAR, 0, 1, 0, 0, 0).getTime()
 export const SIM_END_MS   = new Date(SIM_YEAR, 11, 30, 23, 59, 59).getTime()
 // catatan: data AIS Anda berakhir 30 Des 2025, bukan 31 Des.

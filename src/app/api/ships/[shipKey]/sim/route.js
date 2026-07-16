@@ -26,6 +26,8 @@ import {
 } from '@/lib/db'
 import { NextResponse } from 'next/server'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET(req, { params }) {
   const { shipKey } = await params
   const { searchParams } = new URL(req.url)

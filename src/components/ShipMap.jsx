@@ -26,7 +26,7 @@ import { useEffect, useRef, useState } from "react"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
 import { useSimulation } from "@/components/SimulationProvider"
-import { toISO } from "@/lib/simulationClock"
+import { toISO, displayYear, formatDbDateDisplay } from "@/lib/simulationClock"
 
 // ─── KONSTANTA TAMPILAN ──────────────────────────────────────
 const COLORS = {
@@ -109,7 +109,7 @@ function shipDivIcon(color, selected) {
 }
 
 // ─── KOMPONEN ────────────────────────────────────────────────
-export default function ShipMap({ ships = [], selectedKey, onSelectShip, focusVoyageId = null }) {
+export default function ShipMap({ ships = [], selectedKey, onSelectShip, focusVoyageId = null, livePositions = {} }) {
   const { getVirtualNow } = useSimulation()
 
   // [FIX] Root cause dari crash "Cannot read properties of undefined
@@ -136,8 +136,8 @@ export default function ShipMap({ ships = [], selectedKey, onSelectShip, focusVo
     portLayer: null,
     followed: true,
   })
-  const propsRef = useRef({ selectedKey, focusVoyageId, onSelectShip, ships, showAllRoutes })
-  propsRef.current = { selectedKey, focusVoyageId, onSelectShip, ships, showAllRoutes }
+  const propsRef = useRef({ selectedKey, focusVoyageId, onSelectShip, ships, showAllRoutes, livePositions })
+  propsRef.current = { selectedKey, focusVoyageId, onSelectShip, ships, showAllRoutes, livePositions }
 
   // ── Init peta (sekali) ──
   useEffect(() => {
@@ -242,7 +242,7 @@ export default function ShipMap({ ships = [], selectedKey, onSelectShip, focusVo
                   dashArray: "4 5", noClip: true,
                 })
                   .bindTooltip(
-                    `${v.from_port ?? "?"} → ${v.to_port ?? "?"}<br/><span style="opacity:.7">${v.date_departure ?? ""}</span>`,
+                    `${v.from_port ?? "?"} → ${v.to_port ?? "?"}<br/><span style="opacity:.7">${v.date_departure ? formatDbDateDisplay(v.date_departure, s.ship_key) : ""}</span>`,
                     { sticky: true }
                   )
                   .addTo(map)
@@ -387,29 +387,50 @@ export default function ShipMap({ ships = [], selectedKey, onSelectShip, focusVo
       if (ts - last < 200) return
       last = ts
       const vNow = getVirtualNow()
-      const { selectedKey } = propsRef.current
+      const { selectedKey, livePositions } = propsRef.current
 
       ships.forEach(s => {
-        ensureBuffer(s.ship_key, vNow)
-        const buf = st.buffers[s.ship_key]
-        const m   = st.markers[s.ship_key]
-        if (!buf || !m) return
-        const pos = positionAt(buf.points, vNow)
+        const m = st.markers[s.ship_key]
+        if (!m) return
+
+        // [BARU] Prioritaskan posisi LIVE dari WebSocket AIS ITS bila ada
+        // & masih baru (< 30 dtk). Kalau tidak ada (WS belum konek / belum
+        // ada API key), jatuh balik ke data simulasi 2025 seperti biasa.
+        const lp = livePositions?.[s.ship_key]
+        const liveFresh = lp && (Date.now() - (lp.ts ?? 0) < 30000)
+
+        let pos = null
+        if (liveFresh) {
+          pos = { lat: lp.lat, lon: lp.lon, sog: lp.sog, hdg: lp.heading ?? lp.cog }
+        } else {
+          ensureBuffer(s.ship_key, vNow)
+          const buf = st.buffers[s.ship_key]
+          if (!buf) return
+          pos = positionAt(buf.points, vNow)
+        }
         if (!pos) return
 
         m.marker.setLatLng([pos.lat, pos.lon])
         // Rotasi ikon
         const el = m.marker.getElement()?.querySelector(".ship-rot")
         if (el && pos.hdg != null) el.style.transform = `rotate(${Math.round(pos.hdg)}deg)`
-        // Tooltip info
+        // Tooltip info — tandai LIVE bila dari WebSocket
         m.marker.setTooltipContent(
-          `<b>${s.name}</b><br/>` +
+          `<b>${s.name}</b>${liveFresh ? ' <span style="color:#f87171">● LIVE</span>' : ''}<br/>` +
           `Speed: ${pos.sog != null ? Number(pos.sog).toFixed(1) : "—"} kn · COG: ${pos.hdg != null ? Math.round(pos.hdg) : "—"}°`
         )
-        // Trail
-        const pts = trailPoints(buf.points, vNow)
-        pts.push([pos.lat, pos.lon])
-        m.trail.setLatLngs(pts)
+        // Trail — hanya untuk mode simulasi (WS live: trail dibangun bertahap)
+        if (liveFresh) {
+          const arr = m._liveTrail ?? (m._liveTrail = [])
+          arr.push([pos.lat, pos.lon])
+          if (arr.length > 200) arr.shift()
+          m.trail.setLatLngs(arr)
+        } else {
+          const buf = st.buffers[s.ship_key]
+          const pts = trailPoints(buf.points, vNow)
+          pts.push([pos.lat, pos.lon])
+          m.trail.setLatLngs(pts)
+        }
         m.trail.setStyle({ opacity: s.ship_key === selectedKey ? 0.85 : 0.35 })
       })
 
@@ -444,7 +465,7 @@ export default function ShipMap({ ships = [], selectedKey, onSelectShip, focusVo
       {/* Header overlay */}
       <div className="absolute top-3 left-3 z-[500] bg-slate-900/85 backdrop-blur text-white text-xs rounded-lg px-3 py-2 border border-slate-700">
         <div className="font-semibold">Peta Pergerakan Kapal</div>
-        <div className="text-slate-400 mt-0.5">Jalur & posisi dari data AIS 2025</div>
+        <div className="text-slate-400 mt-0.5">Jalur & posisi dari data AIS {displayYear(selectedKey)}</div>
       </div>
       {/* [BARU] Toggle tampilkan semua jalur histori — default mati */}
       <button

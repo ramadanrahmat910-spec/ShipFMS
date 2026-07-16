@@ -27,19 +27,35 @@ import openpyxl
 from datetime import datetime, date, timedelta
 
 # ─── CONFIG ──────────────────────────────────────────────────
+# [KEAMANAN] Kredensial DB JANGAN di-hardcode di file yang di-commit.
+# Ambil dari environment variable. Set dulu sebelum menjalankan, mis:
+#   export SUPABASE_DB_PASSWORD='...'   (Linux/Mac)
+#   set SUPABASE_DB_PASSWORD=...        (Windows CMD)
+# Password lama yang pernah ter-commit WAJIB di-rotate di dashboard Supabase.
+import os
+
 DB_CONFIG = {
-    "host":            "aws-1-ap-south-1.pooler.supabase.com",
-    "port":            5432,
-    "database":        "postgres",
-    "user":            "postgres.qjqpepkgjfpbbwnvzuts",
-    "password":        "TArahmat77!",
+    "host":            os.environ.get("SUPABASE_DB_HOST", "db.bxmwgsvpixbkhpxbpbbx.supabase.co"),
+    "port":            int(os.environ.get("SUPABASE_DB_PORT", "5432")),
+    "database":        os.environ.get("SUPABASE_DB_NAME", "postgres"),
+    "user":            os.environ.get("SUPABASE_DB_USER", "postgres"),
+    "password":        os.environ.get("SUPABASE_DB_PASSWORD"),   # WAJIB dari env
     "sslmode":         "require",
     "connect_timeout": 30,
 }
+if not DB_CONFIG["password"]:
+    raise SystemExit(
+        "❌ SUPABASE_DB_PASSWORD belum di-set. "
+        "Jalankan: export SUPABASE_DB_PASSWORD='<password_baru>' lalu ulangi.\n"
+        "   (Ingat: rotate dulu password Supabase yang lama karena pernah ter-commit.)"
+    )
 
-EXCEL_BOTHSHIPS   = r"C:\Users\N1NRK\Downloads\TA_Rahmet\Data\AIS_2025_BothShips_FullYear_Updated (version 1)_YANG DIPAKE.xlsx"
-EXCEL_NOON_BALONG = r"C:\Users\N1NRK\Downloads\TA_Rahmet\Data\NOON_REPORT_JUNE_2026_BALONGAN_FULL.xlsx"
-EXCEL_NOON_KLAOS  = r"C:\Users\N1NRK\Downloads\TA_Rahmet\Data\NOON_REPORT_JUNE_2026_KLASOGUN_REVISED.xlsx"
+# [UPDATE] Path file Excel — sesuaikan dengan lokasi file di komputer Anda.
+# File terbaru: 'Data_AIS_FIX_Website_.xlsx' (sheet: 'MT Klasogun (525008053)',
+# 'MT Balongan (525008118)', 'Summary').
+EXCEL_BOTHSHIPS   = os.environ.get("EXCEL_AIS_PATH",   r"C:\Users\N1NRK\Downloads\Data_AIS_FIX_Website_.xlsx")
+EXCEL_NOON_BALONG = os.environ.get("EXCEL_NOON_BALONG", r"C:\Users\N1NRK\Downloads\TA_Rahmet\Data\NOON_REPORT_JUNE_2026_BALONGAN_FULL.xlsx")
+EXCEL_NOON_KLAOS  = os.environ.get("EXCEL_NOON_KLAOS",  r"C:\Users\N1NRK\Downloads\TA_Rahmet\Data\NOON_REPORT_JUNE_2026_KLASOGUN_REVISED.xlsx")
 
 MLR_B0 =  5.0801676028261635
 MLR_B1 =  0.0030303477180683
@@ -211,14 +227,37 @@ def update_ship_params(conn, cur):
 
 # ─── STEP 2 ──────────────────────────────────────────────────
 
+def resolve_ais_sheet(xl, ship_key):
+    """Cari nama sheet AIS untuk sebuah kapal secara ROBUST.
+
+    Nama sheet AIS sempat berubah antar versi file Excel:
+      - versi lama : 'AISDATAMTKLASOGUN2025' / 'AISDATAMTBALONGAN2025'
+      - versi baru : 'MT Klasogun (525008053)' / 'MT Balongan (525008118)'
+    Daripada hardcode (yang bikin import diam-diam GAGAL kalau nama
+    berganti lagi), kita cocokkan berdasarkan kata kunci nama kapal.
+    """
+    key = ship_key.lower()
+    for name in xl.sheet_names:
+        n = str(name).lower().replace(" ", "").replace(".", "")
+        if key in n:                       # 'klasogun'/'balongan' ada di nama sheet
+            return name
+    return None
+
+
 def import_ais(conn, cur):
-    sheets = {
-        "AISDATAMTKLASOGUN2025": "klasogun",
-        "AISDATAMTBALONGAN2025": "balongan",
-    }
+    # [UPDATE] Nama sheet TIDAK lagi di-hardcode — di-resolve dari isi file
+    #          via resolve_ais_sheet(). Jadi file dengan nama sheet baru
+    #          ('MT Klasogun (525008053)') maupun lama sama-sama kebaca.
+    xl = pd.ExcelFile(EXCEL_BOTHSHIPS)
+    ship_keys = ["klasogun", "balongan"]
     total = 0
-    for sheet_name, ship_key in sheets.items():
-        print(f"  Membaca {sheet_name}...")
+    for ship_key in ship_keys:
+        sheet_name = resolve_ais_sheet(xl, ship_key)
+        if not sheet_name:
+            print(f"    ⚠️  Sheet AIS untuk '{ship_key}' TIDAK ditemukan di {EXCEL_BOTHSHIPS}.")
+            print(f"        Sheet tersedia: {xl.sheet_names}")
+            continue
+        print(f"  Membaca sheet '{sheet_name}' → {ship_key}...")
         ship_id = get_ship_id(cur, ship_key)
         df = pd.read_excel(EXCEL_BOTHSHIPS, sheet_name=sheet_name)
         df.columns = [str(c).strip() for c in df.columns]
@@ -235,10 +274,14 @@ def import_ais(conn, cur):
                 ts_utc = pd.to_datetime(row.get("TimeStamp"), errors="coerce", utc=True)
                 if pd.isnull(ts_utc):
                     rows_skip += 1; continue
-                ts_wib = fix_timestamp_wib(
-                    row.get("TimeSTamp_WIB") or row.get("TimeStamp WIB"),
-                    row.get("Date")
-                )
+                # [UPDATE] Kolom WIB beda antar sheet: Klasogun 'TimeSTamp_WIB',
+                # Balongan 'TimeStamp WIB' (pakai spasi). `or` lama bisa keliru
+                # kalau nilai pertama NaN. Ambil kolom mana pun yang ADA & terisi.
+                wib_raw = None
+                for c in ("TimeSTamp_WIB", "TimeStamp WIB", "TimeStamp_WIB", "Timestamp WIB"):
+                    if c in row.index and pd.notna(row.get(c)):
+                        wib_raw = row.get(c); break
+                ts_wib = fix_timestamp_wib(wib_raw, row.get("Date"))
                 hdg = float(row["heading"]) if pd.notna(row.get("heading")) else None
                 if hdg == 511: hdg = None
                 cog = float(row["COG"]) if pd.notna(row.get("COG")) else None
@@ -285,6 +328,12 @@ def import_ais(conn, cur):
 # ─── STEP 3 & 4 ──────────────────────────────────────────────
 
 def import_noon_report(conn, cur, excel_path, ship_key):
+    # [UPDATE] Kalau file noon report tidak ada, LEWATI dengan pesan jelas —
+    # jangan sampai crash setelah AIS sudah masuk (kondisi setengah-jadi).
+    if not os.path.exists(excel_path):
+        print(f"    ⚠️  File noon report tidak ditemukan: {excel_path}")
+        print(f"        Step dilewati. cii_daily tetap dihitung dari AIS (model MLR).")
+        return 0
     ship_id = get_ship_id(cur, ship_key)
     wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
     rows_ok, skipped = [], []
@@ -341,7 +390,15 @@ def import_noon_report(conn, cur, excel_path, ship_key):
 # ─── STEP 5 ──────────────────────────────────────────────────
 
 def import_fuel_aggregat(conn, cur):
-    df = pd.read_excel(EXCEL_BOTHSHIPS, sheet_name="FuelConsumptionByNOON REPORT", header=None)
+    # [UPDATE] Sheet 'FuelConsumptionByNOON REPORT' tidak selalu ada
+    # (file 'Data_AIS_FIX_Website_.xlsx' hanya berisi sheet AIS + Summary).
+    # Kalau tidak ada, lewati saja — jangan sampai menggagalkan seluruh import.
+    xl = pd.ExcelFile(EXCEL_BOTHSHIPS)
+    FUEL_SHEET = "FuelConsumptionByNOON REPORT"
+    if FUEL_SHEET not in xl.sheet_names:
+        print(f"    ⚠️  Sheet '{FUEL_SHEET}' tidak ada di file ini — langkah aggregat dilewati.")
+        return 0
+    df = pd.read_excel(EXCEL_BOTHSHIPS, sheet_name=FUEL_SHEET, header=None)
     total = 0
     for ship_key, col_date, col_dist, col_speed, col_fuel in [
         ("balongan", 1, 2, 3, 4),
@@ -520,11 +577,41 @@ def build_cii_daily(conn, cur):
             print(f"    ✅ {len(rows_daily)} hari cii_daily {ship_key} tersimpan.")
 
 
+# ─── RESET (opsional) ─────────────────────────────────────────
+
+def reset_tables(conn, cur):
+    """Hapus data lama sebelum import ulang, supaya tidak menumpuk /
+    setengah-jadi. HANYA jalan kalau env RESET_BEFORE_IMPORT=1.
+
+    Menghapus cii_daily dulu (turunan), baru ais_tracking, lalu
+    noon_report. Tabel `ship` TIDAK disentuh (parameter kapal tetap).
+    """
+    print("\n[0/6] Reset tabel lama (RESET_BEFORE_IMPORT=1)...")
+    # Urutan penting: cii_daily & noon_report bergantung pada ais/ship.
+    for tbl in ("cii_daily", "ais_tracking", "noon_report"):
+        cur.execute(f"DELETE FROM {tbl}")
+        print(f"    🗑️  {tbl} dikosongkan ({cur.rowcount:,} baris dihapus).")
+    conn.commit()
+    print("    ✅ Reset selesai.")
+
+
 # ─── MAIN ─────────────────────────────────────────────────────
 
 def main():
     conn = psycopg2.connect(**DB_CONFIG)
     cur  = conn.cursor()
+
+    # [BARU] Reset otomatis sebelum import — aktif hanya jika
+    # RESET_BEFORE_IMPORT=1 di-set. Ini destruktif, jadi butuh opt-in
+    # eksplisit + konfirmasi ketik 'HAPUS' supaya tidak terpicu tak sengaja.
+    if os.environ.get("RESET_BEFORE_IMPORT") == "1":
+        print("\n⚠️  RESET_BEFORE_IMPORT=1 — SEMUA data ais_tracking, cii_daily,")
+        print("    dan noon_report akan DIHAPUS sebelum import. Ini tidak bisa di-undo.")
+        jawab = input("    Ketik 'HAPUS' (huruf besar) untuk lanjut, atau Enter untuk batal: ").strip()
+        if jawab == "HAPUS":
+            reset_tables(conn, cur)
+        else:
+            print("    ⏭️  Reset dibatalkan — lanjut import TANPA menghapus.")
 
     print("\n[1/6] Update parameter kapal...")
     update_ship_params(conn, cur)

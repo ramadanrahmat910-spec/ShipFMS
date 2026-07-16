@@ -24,8 +24,9 @@
 //   date  {string} — tanggal yang ditampilkan (YYYY-MM-DD)
 
 import { formatNum } from '@/lib/ciiCalculation'
+import { formatDbDateDisplay } from '@/lib/simulationClock'
 
-export default function ShipOperationalCard({ data, date }) {
+export default function ShipOperationalCard({ data, date, shipKey }) {
   const hasData = !!data
   const distanceDay   = data?.distance_nm_day ?? data?.distance_nm ?? null
   const avgSpeed      = data?.avg_speed_knot  ?? null
@@ -35,7 +36,7 @@ export default function ShipOperationalCard({ data, date }) {
 
   // Format tanggal untuk tampilan
   const displayDate = date
-    ? new Date(date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
+    ? formatDbDateDisplay(date, shipKey, { day: 'numeric', month: 'long', year: 'numeric' })
     : '—'
 
   // [FIX #2] Teks fallback yang jujur: tidak ada voyage aktif = kapal

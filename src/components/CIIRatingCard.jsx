@@ -6,6 +6,7 @@ import {
   formatCII,
   predictLimitDate,
 } from '@/lib/ciiCalculation'
+import { formatDbDateDisplay } from '@/lib/simulationClock'
 
 // ─── CONFIG RATING ────────────────────────────────────────────
 export const ratingConfig = {
@@ -75,15 +76,14 @@ export default function CIIRatingCard({
   // Prediksi tanggal sentuh batas (dari DB kalau ada, fallback hitung sendiri)
   let limitDateStr = null
   if (dateLimitReached) {
-    const d = new Date(dateLimitReached)
-    limitDateStr = d.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
+    limitDateStr = formatDbDateDisplay(dateLimitReached, shipKey, { day: 'numeric', month: 'long', year: 'numeric' })
   } else if (lastDate && ciiNum && reqNum && !comply) {
     // Sudah lewat batas — tidak perlu prediksi
     limitDateStr = null
   } else if (lastDate && ciiNum && reqNum) {
     const pred = predictLimitDate(ciiNum, reqNum, lastDate, year)
     if (pred.date) {
-      limitDateStr = pred.date.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
+      limitDateStr = formatDbDateDisplay(pred.date, shipKey, { day: 'numeric', month: 'long', year: 'numeric' })
     }
   }
 

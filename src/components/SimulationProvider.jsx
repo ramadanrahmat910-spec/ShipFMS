@@ -19,6 +19,7 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback } from "react"
 import {
   anchoredVirtualNow, clampToSimYear, toDateStr, SPEED_OPTIONS,
+  formatDisplayDate, displayYear,
 } from "@/lib/simulationClock"
 
 const SimulationContext = createContext(null)
@@ -109,7 +110,7 @@ export default function SimulationProvider({ children, initialSpeed = 60 }) {
 // ─── BAR KONTROL JAM VIRTUAL ─────────────────────────────────
 // Badge "LIVE (Simulasi 2025)" + jam virtual + play/pause + kecepatan.
 
-export function SimClockBar() {
+export function SimClockBar({ shipKey = null }) {
   const { virtualTime, speed, setSpeed, playing, setPlaying, isRealtimeMode, setIsRealtimeMode } = useSimulation()
 
   // [FIX] Hydration mismatch: Date.now()-derived text di-render sekali
@@ -123,8 +124,12 @@ export function SimClockBar() {
   useEffect(() => setMounted(true), [])
 
   const d = new Date(virtualTime)
+  // Tanggal ditampilkan +offset tahun (mis. Balongan → 2026) HANYA saat
+  // mode simulasi. Mode realtime pakai tanggal asli. Jam tak digeser.
   const dateStr = mounted
-    ? d.toLocaleDateString("id-ID", { weekday: "short", day: "numeric", month: "short", year: "numeric" })
+    ? (isRealtimeMode
+        ? d.toLocaleDateString("id-ID", { weekday: "short", day: "numeric", month: "short", year: "numeric" })
+        : formatDisplayDate(virtualTime, shipKey, { weekday: "short", day: "numeric", month: "short", year: "numeric" }))
     : "—"
   const timeStr = mounted
     ? d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
@@ -143,7 +148,7 @@ export function SimClockBar() {
         title="Klik untuk beralih antara Mode Realtime dan Mode Simulasi Historis"
       >
         <span className={`w-1.5 h-1.5 rounded-full ${isRealtimeMode ? "bg-red-400 animate-pulse" : "bg-emerald-400"} ${!isRealtimeMode && playing ? "animate-pulse" : ""}`} />
-        {isRealtimeMode ? "LIVE · Data Sensor Realtime" : "LIVE · Simulasi Data 2025"}
+        {isRealtimeMode ? "LIVE · Data Sensor Realtime" : `LIVE · Simulasi Data ${displayYear(shipKey)}`}
       </button>
 
       {/* Jam virtual */}

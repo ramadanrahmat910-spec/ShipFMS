@@ -9,6 +9,7 @@
 import { useEffect, useState } from "react"
 import { getAllShips, getCIIHistory } from "@/lib/api"
 import { CIIBadge } from "@/components/CIIRatingCard"
+import { formatDbDateDisplay } from "@/lib/simulationClock"
 
 function RatingCell({ rating }) {
   if (!rating) {
@@ -100,7 +101,7 @@ export default function HistoriPage() {
                       {row.sail_condition || "—"}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-right text-gray-500 text-xs">{row.date_arrived}</td>
+                  <td className="px-4 py-3 text-right text-gray-500 text-xs">{formatDbDateDisplay(row.date_arrived, selectedKey)}</td>
                   <td className="px-4 py-3 text-right text-gray-500 text-xs">
                     {row.distance_nm?.toLocaleString()}
                   </td>
