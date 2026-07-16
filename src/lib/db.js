@@ -326,12 +326,36 @@ export async function getVoyageRoutesSampled(shipKey, maxPerVoyage = 300) {
   return voyages.map(v => {
     let track = tracks[v.id] ?? []
     if (track.length < 2) {
-      // Fallback: garis lurus dari pelabuhan asal ke tujuan
+      // Fallback: buat jalur melengkung (kurva) dari pelabuhan asal ke tujuan
+      // Menghindari garis lurus kaku yang tidak natural di peta pelayaran.
       const fromP = ports.find(p => p.port_name === v.from_port)
       const toP   = ports.find(p => p.port_name === v.to_port)
       const a = fromP ? toValidLatLon(fromP.lat, fromP.lon) : null
       const b = toP   ? toValidLatLon(toP.lat, toP.lon)     : null
-      if (a && b && (a[0] !== b[0] || a[1] !== b[1])) track = [a, b]
+      
+      if (a && b && (a[0] !== b[0] || a[1] !== b[1])) {
+        const numPoints = 10;
+        const curvedTrack = [];
+        
+        // Offset kurva, dibuat sedikit random berdasarkan nama pelabuhan 
+        // agar tidak semua kurva melengkung ke arah yang sama persis
+        const hash = (v.from_port + v.to_port).length;
+        const curveFactor = (hash % 2 === 0 ? 0.15 : -0.15);
+        
+        for (let i = 0; i <= numPoints; i++) {
+          const t = i / numPoints;
+          // Interpolasi linear
+          const latL = a[0] + (b[0] - a[0]) * t;
+          const lonL = a[1] + (b[1] - a[1]) * t;
+          
+          // Offset ortogonal untuk membuat kurva melengkung (mirip Bezier sederhana)
+          const latOffset = -(b[1] - a[1]) * curveFactor * Math.sin(t * Math.PI);
+          const lonOffset =  (b[0] - a[0]) * curveFactor * Math.sin(t * Math.PI);
+          
+          curvedTrack.push([latL + latOffset, lonL + lonOffset, 0]); // waktu = 0 sbg fallback
+        }
+        track = curvedTrack;
+      }
     }
     return {
       voyage_id:      v.id,

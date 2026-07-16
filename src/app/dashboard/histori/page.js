@@ -35,7 +35,13 @@ export default function HistoriPage() {
   useEffect(() => {
     setLoading(true)
     getCIIHistory(selectedKey).then((data) => {
-      setHistory(data || [])
+      // Filter histori agar hanya menampilkan data dari Januari - Juli
+      const filteredData = (data || []).filter(row => {
+        if (!row.date_arrived) return false;
+        const date = new Date(row.date_arrived);
+        return date.getMonth() <= 6; // getMonth() returns 0 (Jan) - 6 (Jul)
+      });
+      setHistory(filteredData)
       setLoading(false)
     })
   }, [selectedKey])

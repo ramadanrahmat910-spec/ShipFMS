@@ -302,9 +302,15 @@ function DashboardContent() {
     return null
   }, [viewingVoyage, voyageDetail, staticCIIRequired, displayFuel, live, selectedKey, dailyData, year])
 
-  const sortedVoyages = [...voyages].sort((a, b) =>
-    new Date(b.date_departure ?? 0) - new Date(a.date_departure ?? 0)
-  )
+  const sortedVoyages = [...voyages]
+    .filter(v => {
+      if (!v.date_departure) return false;
+      const date = new Date(v.date_departure);
+      return date.getMonth() <= 6; // Filter Januari - Juli
+    })
+    .sort((a, b) =>
+      new Date(b.date_departure ?? 0) - new Date(a.date_departure ?? 0)
+    )
 
   if (!ship && !loading) return (
     <div className="p-6 text-sm text-gray-400">Memuat data kapal...</div>

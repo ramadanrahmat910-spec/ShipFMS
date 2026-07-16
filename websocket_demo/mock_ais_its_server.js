@@ -2,109 +2,154 @@
 /*
  * mock_ais_its_server.js — Server WebSocket TIRUAN untuk AIS ITS
  * =============================================================
- * TUJUAN: mendemokan fitur "streaming kapal live via WebSocket" SEKARANG,
- * sebelum API key AIS ITS asli didapat. Server ini meniru perilaku AIS
- * ITS: menerima pesan subscribe (berisi "Apikey" & filter MMSI), lalu
- * mengirim "position report" terus-menerus — tapi datanya diambil dari
- * data historis 2025 yang diputar seolah-olah realtime.
- *
- * Dengan ini, saat presentasi:
- *   - Peta menampilkan kapal BERGERAK secara live via WebSocket sungguhan.
- *   - Kode klien (lib/aisItsSocket.js) TIDAK perlu diubah — cukup arahkan
- *     NEXT_PUBLIC_AISITS_WS_URL ke ws://localhost:8080.
- *   - Saat API key AIS ITS asli datang, matikan server ini dan ganti URL
- *     ke endpoint AIS ITS. Klien tetap sama.
- *
- * FORMAT PESAN mengikuti konvensi aisstream.io (yang juga dipakai klien),
- * jadi parseMessage() di sisi klien langsung cocok.
- *
- * CARA PAKAI:
- *   npm install ws
- *   node mock_ais_its_server.js
- *   (server jalan di ws://localhost:8080)
- *
- * Lalu di .env.local web:
- *   NEXT_PUBLIC_AISITS_WS_URL=ws://localhost:8080
- *   NEXT_PUBLIC_AISITS_API_KEY=demo-key-apa-saja
+ * Disesuaikan untuk mengambil titik koordinat (track) langsung 
+ * dari tabel ais_tracking di database Supabase secara dinamis.
  */
 
 const { WebSocketServer } = require('ws')
+const fs = require('fs')
+const path = require('path')
+const { createClient } = require('@supabase/supabase-js')
 
-const PORT = process.env.MOCK_AIS_PORT || 8080
-
-// MMSI dua kapal (samakan dengan lib/aisItsSocket.js).
-const SHIPS = {
-  klasogun: { mmsi: '525008053', lat: -7.20, lon: 112.80 },
-  balongan: { mmsi: '525008118', lat: -8.57, lon: 116.06 },
+// 1. Parse .env.local untuk mendapatkan kredensial Supabase
+const envPath = path.resolve(process.cwd(), '.env.local')
+const env = {}
+if (fs.existsSync(envPath)) {
+  const content = fs.readFileSync(envPath, 'utf8')
+  content.split('\n').forEach(line => {
+    const match = line.match(/^([^=]+)=(.*)$/)
+    if (match) {
+      env[match[1].trim()] = match[2].trim().replace(/^"|"$/g, '').replace(/^'|'$/g, '')
+    }
+  })
 }
 
-// Buat jalur melingkar sederhana di sekitar posisi awal tiap kapal,
-// supaya terlihat "bergerak". (Pengganti data 2025 asli — kalau mau,
-// ganti bagian ini dengan pembacaan track asli dari Supabase/CSV.)
-function nextPosition(ship, tick) {
-  const r = 0.03                       // radius gerak (derajat)
-  const angle = (tick % 360) * Math.PI / 180
-  return {
-    lat: ship.lat + r * Math.sin(angle),
-    lon: ship.lon + r * Math.cos(angle),
-    sog: 8 + 2 * Math.sin(angle),      // kecepatan 6–10 knot berayun
-    cog: (tick * 3) % 360,
-    heading: (tick * 3) % 360,
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+if (!supabaseUrl || !supabaseKey) {
+  console.error("❌ Gagal: Supabase URL atau Key tidak ditemukan di .env.local")
+  process.exit(1)
+}
+
+const supabase = createClient(supabaseUrl, supabaseKey)
+const PORT = process.env.MOCK_AIS_PORT || 8080
+
+// MMSI dua kapal
+const SHIPS = {
+  klasogun: { mmsi: '525008053' },
+  balongan: { mmsi: '525008118' },
+}
+
+// State penyimpanan titik koordinat dari DB
+const dbTracks = {
+  '525008053': [],
+  '525008118': []
+}
+
+// Fungsi untuk membaca rute AIS dari database
+async function loadTracks() {
+  console.log("⏳ Membaca data rute AIS dari database Supabase...")
+  
+  for (const shipKey in SHIPS) {
+    const mmsi = SHIPS[shipKey].mmsi
+    
+    // Ambil 1000 titik koordinat terbaru dari database untuk di loop
+    const { data, error } = await supabase
+      .from('ais_tracking')
+      .select('lat, lon, sog, cog, true_heading, timestamp')
+      .eq('mmsi', mmsi)
+      .order('timestamp', { ascending: false })
+      .limit(1000)
+      
+    if (error) {
+      console.error(`❌ Gagal load rute ${shipKey}:`, error)
+    } else if (data && data.length > 0) {
+      // Reverse array agar titiknya maju secara berurutan (lama ke baru)
+      dbTracks[mmsi] = data.reverse()
+      console.log(`✅ Berhasil memuat ${data.length} titik koordinat untuk ${shipKey} (MMSI: ${mmsi})`)
+    } else {
+      console.log(`⚠️ Tidak ada data ditemukan untuk ${shipKey} (MMSI: ${mmsi})`)
+    }
   }
 }
 
-const wss = new WebSocketServer({ port: PORT })
-console.log(`🛰️  Mock AIS ITS WebSocket berjalan di ws://localhost:${PORT}`)
-console.log('   Menunggu koneksi dari dashboard...')
+function nextPosition(mmsi, tick) {
+  const track = dbTracks[mmsi]
+  if (!track || track.length === 0) {
+    return { lat: 0, lon: 0, sog: 0, cog: 0, heading: 0 }
+  }
+  
+  // Ambil titik koordinat secara berurutan (loop kembali ke awal jika sudah di titik terakhir)
+  // Untuk simulasi realtime yang dinamis, kita loncat perlahan sepanjang titik
+  const index = tick % track.length
+  const p = track[index]
+  
+  return { 
+    lat: p.lat, 
+    lon: p.lon, 
+    sog: p.sog ?? 10, 
+    cog: p.cog ?? 0, 
+    heading: p.true_heading ?? p.cog ?? 0 
+  }
+}
 
-wss.on('connection', (ws) => {
-  console.log('✅ Klien terhubung.')
-  let mmsiFilter = null    // daftar MMSI yang di-subscribe klien
-  let tick = 0
-  let timer = null
-
-  ws.on('message', (data) => {
-    // Klien mengirim pesan subscribe: { Apikey, BoundingBoxes, FiltersShipMMSI, ... }
-    try {
-      const sub = JSON.parse(data.toString())
-      console.log('   Subscribe diterima. Apikey:',
-        sub.Apikey ? '(ada)' : '(kosong)',
-        '| MMSI:', sub.FiltersShipMMSI ?? 'semua')
-      if (Array.isArray(sub.FiltersShipMMSI) && sub.FiltersShipMMSI.length) {
-        mmsiFilter = sub.FiltersShipMMSI.map(String)
-      }
-    } catch {
-      // abaikan pesan non-JSON
-    }
-
-    // Mulai streaming posisi tiap 1 detik.
-    if (timer) clearInterval(timer)
-    timer = setInterval(() => {
-      tick += 1
-      for (const ship of Object.values(SHIPS)) {
-        if (mmsiFilter && !mmsiFilter.includes(ship.mmsi)) continue
-        const p = nextPosition(ship, tick)
-        // Bentuk pesan meniru aisstream.io position report.
-        const message = {
-          MessageType: 'PositionReport',
-          MetaData: { MMSI: Number(ship.mmsi), time_utc: new Date().toISOString() },
-          Message: {
-            PositionReport: {
-              Latitude: p.lat,
-              Longitude: p.lon,
-              Sog: p.sog,
-              Cog: p.cog,
-              TrueHeading: p.heading,
-            },
-          },
+(async () => {
+  await loadTracks()
+  
+  const wss = new WebSocketServer({ port: PORT })
+  console.log(`\n🛰️  Mock AIS ITS WebSocket berjalan di ws://localhost:${PORT}`)
+  console.log('   Sumber Data: Database Supabase (Tabel ais_tracking)')
+  console.log('   Menunggu koneksi dari dashboard...')
+  
+  wss.on('connection', (ws) => {
+    console.log('🔗 Klien terhubung dari Dashboard.')
+    let mmsiFilter = null
+    let tick = 0
+    let timer = null
+  
+    ws.on('message', (data) => {
+      try {
+        const sub = JSON.parse(data.toString())
+        if (Array.isArray(sub.FiltersShipMMSI) && sub.FiltersShipMMSI.length) {
+          mmsiFilter = sub.FiltersShipMMSI.map(String)
         }
-        ws.send(JSON.stringify(message))
+      } catch {
+        // Abaikan
       }
-    }, 1000)
+  
+      if (timer) clearInterval(timer)
+      
+      // Kirim koordinat setiap 1 detik
+      timer = setInterval(() => {
+        tick += 1
+        for (const shipKey in SHIPS) {
+          const mmsi = SHIPS[shipKey].mmsi
+          if (mmsiFilter && !mmsiFilter.includes(mmsi)) continue
+          
+          const p = nextPosition(mmsi, tick)
+          
+          const message = {
+            MessageType: 'PositionReport',
+            MetaData: { MMSI: Number(mmsi), time_utc: new Date().toISOString() },
+            Message: {
+              PositionReport: {
+                Latitude: p.lat,
+                Longitude: p.lon,
+                Sog: p.sog,
+                Cog: p.cog,
+                TrueHeading: p.heading,
+              },
+            },
+          }
+          ws.send(JSON.stringify(message))
+        }
+      }, 1000)
+    })
+  
+    ws.on('close', () => {
+      console.log('❌ Klien terputus.')
+      if (timer) clearInterval(timer)
+    })
   })
-
-  ws.on('close', () => {
-    console.log('❌ Klien terputus.')
-    if (timer) clearInterval(timer)
-  })
-})
+})()

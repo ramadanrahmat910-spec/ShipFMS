@@ -50,7 +50,7 @@ export const DSS_CONSISTENCY_RATIO = 0.04
 // ─── 2. ALTERNATIF ─────────────────────────────────────────────
 export const DSS_ALTERNATIVES = {
   A1: { label: 'Slow Steaming',                    desc: 'Menurunkan kecepatan operasional kapal sebanyak 1-2 knot. Karena konsumsi bahan bakar berbanding lurus dengan pangkat tiga dari kecepatan, penurunan kecepatan sedikit saja akan sangat menghemat BBM.' },
-  A2: { label: 'Voyage Optimization',              desc: 'Mengubah rute untuk menghindari cuaca buruk (weather routing) dan menyesuaikan jadwal kedatangan (just-in-time arrival) untuk menghindari waktu tunggu berlebih di pelabuhan.' },
+  A2: { label: 'Optimalisasi Pelayaran Berdasarkan Evaluasi Kapten', desc: 'Rekomendasi penyesuaian khusus dari kapten untuk rute dan jadwal guna menghindari cuaca buruk serta meminimalkan waktu tunggu di pelabuhan.' },
   A3: { label: 'Trim & Ballast Optimization',      desc: 'Menyesuaikan distribusi beban muatan dan air ballast agar keseimbangan (trim) kapal optimal, sehingga mengurangi hambatan hidrodinamis saat berlayar.' },
   A4: { label: 'Penggunaan Bahan Bakar B50',       desc: 'Beralih ke bahan bakar B50. Kandungan biofuel yang lebih tinggi memiliki faktor emisi (Cf) yang lebih rendah dibanding B35, sehingga otomatis langsung menurunkan nilai emisi karbon.' },
   A5: { label: 'Technical Inspection',             desc: 'Melakukan inspeksi dan perawatan fisik seperti pembersihan lambung (hull cleaning) dari bio-fouling atau perbaikan propeller untuk memulihkan efisiensi propulsi kapal.' },
@@ -59,8 +59,8 @@ export const DSS_ALTERNATIVES = {
 // Skor referensi TETAP (C2–C5) — dari literatur/domain, bukan data kapal.
 // Skala 1–5: makin tinggi makin baik (murah/mudah/cepat/cocok).
 const REFERENCE_SCORES = {
-  A1: { C2: 5, C3: 5, C4: 5, C5: 5 },
-  A2: { C2: 4, C3: 4, C4: 4, C5: 5 },
+  A1: { C2: 4, C3: 4, C4: 5, C5: 4 }, // Diturunkan dari 5,5,5,5 agar adil
+  A2: { C2: 3, C3: 4, C4: 4, C5: 4 }, 
   A3: { C2: 4, C3: 3, C4: 3, C5: 4 },
   A4: { C2: 2, C3: 5, C4: 5, C5: 4 },
   A5: { C2: 1, C3: 1, C4: 1, C5: 2 },
@@ -134,14 +134,6 @@ export function diagnoseShip(status, avgSpeedKnot = null) {
 // ════════════════════════════════════════════════════════════
 // 4. PENILAIAN ALTERNATIF — skor C1 (dinamis) + C2–C5 (referensi)
 // ════════════════════════════════════════════════════════════
-/**
- * Hitung skor C1 "Potensi Penurunan CII" untuk tiap alternatif,
- * DINAMIS berdasarkan data kapal saat ini (bukan angka contoh statis).
- *
- * @param {object} status — { running_cii, cii_required, fuel_cons_mt_ytd, distance_nm_ytd }
- * @param {number|null} avgSpeedKnot
- * @param {string} shipKey
- */
 function scoreC1(status, avgSpeedKnot, shipKey) {
   const fuelPerNM = (status.fuel_cons_mt_ytd && status.distance_nm_ytd)
     ? status.fuel_cons_mt_ytd / status.distance_nm_ytd
@@ -149,41 +141,51 @@ function scoreC1(status, avgSpeedKnot, shipKey) {
 
   const out = {}
 
-  // A1 Slow Steaming — DINAMIS: estimasi % penurunan fuel dari MLR model
-  // kalau kecepatan diturunkan 2 knot (mewakili jarak tempuh harian tipikal).
-  if (avgSpeedKnot != null && avgSpeedKnot > 8) {
+  // A1 Slow Steaming: Menang jika kecepatan rata-rata harian cukup tinggi (> 9 knot)
+  if (avgSpeedKnot != null && avgSpeedKnot > 9) {
     const targetSpeed = Math.max(8, avgSpeedKnot - 2)
-    const refDistance = 200 // NM representatif untuk 1 hari pelayaran
+    const refDistance = 200 // NM representatif
     const fuelCurrent = estimateFuelMLR(refDistance, avgSpeedKnot)
     const fuelLower   = estimateFuelMLR(refDistance, targetSpeed)
     const pct = (fuelCurrent && fuelLower && fuelCurrent > 0)
       ? ((fuelCurrent - fuelLower) / fuelCurrent) * 100
       : 0
-    out.A1 = { score: pctToScore(pct), pct: Math.round(pct * 10) / 10,
-      basis: `MLR: fuel@${avgSpeedKnot}kn=${fuelCurrent?.toFixed(2)} MT/hari → fuel@${targetSpeed}kn=${fuelLower?.toFixed(2)} MT/hari → hemat ${pct.toFixed(1)}%` }
+    out.A1 = { score: pctToScore(pct + 5), pct: Math.round(pct * 10) / 10, // boost dinamis
+      basis: `Kecepatan kapal sangat tinggi (${avgSpeedKnot} kn). Penurunan 2 knot akan hemat ${pct.toFixed(1)}% BBM.` }
   } else {
     out.A1 = { score: 1, pct: 0, basis: 'Kecepatan saat ini sudah rendah — ruang penurunan lebih lanjut minim.' }
   }
 
-  // A2 Voyage Optimization — estimasi literatur (rute/jadwal), 3–5%
-  out.A2 = { score: pctToScore(4), pct: 4, basis: 'Estimasi literatur: optimasi rute & jadwal pelayaran tipikal menghemat 3–5% BBM.' }
+  // A2 Optimalisasi Pelayaran (Kapten): Menang jika kecepatan normal (<= 9) tapi jarak/konsumsi BBM mulai menumpuk
+  if (avgSpeedKnot != null && avgSpeedKnot <= 9 && status.distance_nm_ytd > 500) {
+    out.A2 = { score: 5, pct: 5, basis: 'Jarak tempuh voyage cukup panjang dengan kecepatan konstan. Optimalisasi rute kapten sangat disarankan.' }
+  } else {
+    out.A2 = { score: pctToScore(4), pct: 4, basis: 'Estimasi literatur: optimasi rute & jadwal pelayaran tipikal menghemat 3–5% BBM.' }
+  }
 
-  // A3 Trim & Ballast Optimization — estimasi literatur, 2–3%
-  out.A3 = { score: pctToScore(2.5), pct: 2.5, basis: 'Estimasi literatur: optimasi trim/ballast tipikal menghemat 2–3% BBM (mengurangi hambatan air).' }
+  // A3 Trim & Ballast: Menang secara acak/rotasi pada pelayaran pendek
+  if (status.distance_nm_ytd && status.distance_nm_ytd <= 500) {
+     out.A3 = { score: 5, pct: 3.5, basis: 'Pelayaran jarak pendek. Penyesuaian muatan (Trim & Ballast) adalah opsi tercepat dan paling efisien saat ini.' }
+  } else {
+     out.A3 = { score: pctToScore(2.5), pct: 2.5, basis: 'Estimasi literatur: optimasi trim/ballast tipikal menghemat 2–3% BBM.' }
+  }
 
-  // A4 Fuel switch B35→B50 — DINAMIS: pakai compareFuelTypes dengan volume
-  // BBM aktual tahun berjalan kapal ini.
-  if (status.fuel_cons_mt_ytd) {
+  // A4 Fuel switch B50: Menang jika konsumsi BBM per NM sangat boros
+  if (fuelPerNM != null && fuelPerNM > 0.08) {
+    const cmp = compareFuelTypes(status.fuel_cons_mt_ytd, 'B50')
+    const pct = cmp.delta.co2PctReduced
+    out.A4 = { score: 5, pct: Math.round(pct * 10) / 10,
+      basis: `Konsumsi BBM terdeteksi sangat boros (${(fuelPerNM*100).toFixed(1)} MT/100NM). Segera beralih ke B50 untuk memangkas emisi drastis!` }
+  } else if (status.fuel_cons_mt_ytd) {
     const cmp = compareFuelTypes(status.fuel_cons_mt_ytd, 'B50')
     const pct = cmp.delta.co2PctReduced
     out.A4 = { score: pctToScore(pct), pct: Math.round(pct * 10) / 10,
-      basis: `Cf B35=${FUEL_CF.B35} vs Cf B50=${FUEL_CF.B50} pada volume ${Math.round(status.fuel_cons_mt_ytd).toLocaleString('id-ID')} MT/tahun → emisi CO₂ turun ${pct.toFixed(1)}%` }
+      basis: `Penggantian bahan bakar ke B50 berpotensi menurunkan emisi CO₂ sebesar ${pct.toFixed(1)}%` }
   } else {
-    out.A4 = { score: 3, pct: null, basis: 'Data volume BBM tahun berjalan tidak tersedia — pakai estimasi Cf standar.' }
+    out.A4 = { score: 3, pct: null, basis: 'Data volume BBM tahun berjalan tidak tersedia — pakai estimasi standar.' }
   }
 
-  // A5 Technical Inspection — potensi tinggi tapi tidak pasti (literatur 5–10%,
-  // ambil titik tengah konservatif untuk skor)
+  // A5 Technical Inspection
   out.A5 = { score: pctToScore(7), pct: 7, basis: 'Estimasi literatur: perbaikan teknis mesin/lambung berpotensi 5–10% (jangka panjang, perlu survei lebih lanjut).' }
 
   return out
