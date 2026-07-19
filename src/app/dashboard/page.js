@@ -108,14 +108,7 @@ function DashboardContent() {
     }
   }, [year])
 
-  const initialMount = useRef(true)
   useEffect(() => {
-    if (initialMount.current) {
-      initialMount.current = false
-      fetchStatic(selectedKey)
-      return
-    }
-    setSelectedVoyageId(null)
     fetchStatic(selectedKey)
   }, [selectedKey, fetchStatic])
 
@@ -439,7 +432,10 @@ function DashboardContent() {
           <ShipMap
             ships={ships}
             selectedKey={selectedKey}
-            onSelectShip={setSelectedKey}
+            onSelectShip={(k) => {
+              setSelectedKey(k)
+              setSelectedVoyageId(null)
+            }}
             focusVoyageId={selectedVoyageId}
           />
 
