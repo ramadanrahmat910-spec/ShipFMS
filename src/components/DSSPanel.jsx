@@ -80,7 +80,7 @@ export default function DSSPanel({ dss, loading }) {
     return <div className="text-sm text-gray-400 text-center py-8">Data belum cukup untuk menjalankan DSS.</div>
   }
 
-  const { diagnosis, macc, decision, prediction, economics } = dss
+  const { diagnosis, macc, decision, prediction, economics, boundaries } = dss
 
   return (
     <div className="flex flex-col gap-5">
@@ -219,6 +219,57 @@ export default function DSSPanel({ dss, loading }) {
                 {formatRp(economics.costPerTonCO2)}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. IMO BOUNDARIES REFERENCE */}
+      {boundaries && (
+        <div className="bg-white border border-gray-200 rounded-xl p-5">
+          <StageHeader n={6} title="Referensi Batas Nilai IMO" subtitle="Ambang batas (threshold) aktual untuk setiap Grade CII berdasarkan standar kapal ini" />
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left">
+              <thead>
+                <tr className="border-b border-gray-100 text-gray-400">
+                  <th className="py-2 pr-3">Grade</th>
+                  <th className="py-2 px-2">Batas Nilai CII</th>
+                  <th className="py-2 px-2">Batas Posisi</th>
+                  <th className="py-2 pl-2 w-full">Keterangan</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-b border-gray-50">
+                  <td className="py-2 pr-3"><GradeBadge grade="A" /></td>
+                  <td className="py-2 px-2 font-medium">&lt; {boundaries.superior.toFixed(3)}</td>
+                  <td className="py-2 px-2 text-gray-500">&lt; 86%</td>
+                  <td className="py-2 pl-2 text-gray-500">Sangat Baik (Superior)</td>
+                </tr>
+                <tr className="border-b border-gray-50">
+                  <td className="py-2 pr-3"><GradeBadge grade="B" /></td>
+                  <td className="py-2 px-2 font-medium">&lt; {boundaries.lower.toFixed(3)}</td>
+                  <td className="py-2 px-2 text-gray-500">&lt; 94%</td>
+                  <td className="py-2 pl-2 text-gray-500">Baik (Lower)</td>
+                </tr>
+                <tr className="border-b border-gray-50 bg-blue-50/30">
+                  <td className="py-2 pr-3"><GradeBadge grade="C" /></td>
+                  <td className="py-2 px-2 font-medium">&lt; {boundaries.upper.toFixed(3)}</td>
+                  <td className="py-2 px-2 text-gray-500">&lt; 106%</td>
+                  <td className="py-2 pl-2 text-gray-600 font-medium">Cukup (Target Utama IMO) — Required CII: {boundaries.required.toFixed(3)} (100%)</td>
+                </tr>
+                <tr className="border-b border-gray-50">
+                  <td className="py-2 pr-3"><GradeBadge grade="D" /></td>
+                  <td className="py-2 px-2 font-medium">&lt; {boundaries.inferior.toFixed(3)}</td>
+                  <td className="py-2 px-2 text-gray-500">&lt; 118%</td>
+                  <td className="py-2 pl-2 text-gray-500">Buruk (Tindakan Korektif)</td>
+                </tr>
+                <tr>
+                  <td className="py-2 pr-3"><GradeBadge grade="E" /></td>
+                  <td className="py-2 px-2 font-medium">&ge; {boundaries.inferior.toFixed(3)}</td>
+                  <td className="py-2 px-2 text-gray-500">&ge; 118%</td>
+                  <td className="py-2 pl-2 text-gray-500">Sangat Buruk (Tindakan Segera)</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       )}

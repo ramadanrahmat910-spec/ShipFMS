@@ -324,5 +324,5 @@ export function runDSS({ shipKey, status, avgSpeedKnot = null, year = 2025, curr
     }
   }
 
-  return { diagnosis, macc, decision: top, prediction, economics }
+  return { diagnosis, macc, decision: top, prediction, economics, boundaries }
 }
