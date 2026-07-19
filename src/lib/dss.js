@@ -54,29 +54,29 @@ import {
 // jadi 3 kartu di UI otomatis berubah isinya mengikuti kondisi kapal
 // (bukan cuma urutannya yang berubah dari 5 opsi yang sama terus).
 export const DSS_ALTERNATIVES = {
-  A1:  { label: 'Slow Steaming',                    desc: 'Menurunkan kecepatan rata-rata operasional' },
-  A2:  { label: 'Voyage Optimization',              desc: 'Optimasi rute & jadwal pelayaran' },
-  A3:  { label: 'Trim & Ballast Optimization',      desc: 'Optimasi trim/ballast untuk kurangi hambatan air' },
-  A4:  { label: 'Penggunaan Bahan Bakar B50',       desc: 'Beralih ke BBM dengan Cf lebih rendah' },
-  A5:  { label: 'Technical Inspection',             desc: 'Inspeksi teknis mesin & lambung (kondisi serius)' },
-  A6:  { label: 'Hull Cleaning & Antifouling',      desc: 'Bersihkan & lapisi ulang lambung untuk kurangi hambatan' },
-  A7:  { label: 'Propeller Polishing',              desc: 'Poles baling-baling untuk pulihkan efisiensi dorong' },
-  A8:  { label: 'Weather Routing',                  desc: 'Rute mengikuti cuaca/arus untuk kurangi hambatan jarak jauh' },
-  A9:  { label: 'Engine Tuning & Preventive Maint.',desc: 'Penyetelan/perawatan mesin preventif' },
-  A10: { label: 'Crew Energy Awareness Training', desc: 'Pelatihan kru terkait standar operasi efisiensi energi (SEEMP)' },
+  A1: { label: 'Slow Steaming', desc: 'Menurunkan kecepatan rata-rata operasional' },
+  A2: { label: 'Voyage Optimization', desc: 'Optimasi rute & jadwal pelayaran' },
+  A3: { label: 'Trim & Ballast Optimization', desc: 'Optimasi trim/ballast untuk kurangi hambatan air' },
+  A4: { label: 'Penggunaan Bahan Bakar B50', desc: 'Beralih ke BBM dengan Cf lebih rendah' },
+  A5: { label: 'Technical Inspection', desc: 'Inspeksi teknis mesin & lambung (kondisi serius)' },
+  A6: { label: 'Hull Cleaning & Antifouling', desc: 'Bersihkan & lapisi ulang lambung untuk kurangi hambatan' },
+  A7: { label: 'Propeller Polishing', desc: 'Poles baling-baling untuk pulihkan efisiensi dorong' },
+  A8: { label: 'Weather Routing', desc: 'Rute mengikuti cuaca/arus untuk kurangi hambatan jarak jauh' },
+  A9: { label: 'Engine Tuning & Preventive Maint.', desc: 'Penyetelan/perawatan mesin preventif' },
+  A10: { label: 'Pelatihan Kru — Operasi Hemat BBM', desc: 'Pelatihan praktik operasional hemat bahan bakar' },
 }
 
 // [ASUMSI ILUSTRATIF — sebutkan di metodologi] Biaya & %CO2 untuk
 // alternatif yang TIDAK bisa dihitung langsung dari data kapal.
 // A1 & A4 dihitung dinamis (lihat computeMACC), tidak pakai tabel ini.
 const REFERENCE_ANNUAL_COST_IDR = {
-  A2:  50_000_000,
-  A3:  20_000_000,     // one-time, diamortisasi (lihat AMORTIZATION_YEARS)
-  A5:  500_000_000,    // one-time, diamortisasi
-  A6:  150_000_000,    // one-time (docking), diamortisasi tiap ~2 tahun (fouling terbentuk lagi)
-  A7:  30_000_000,     // one-time per tahun (dilakukan rutin tahunan)
-  A8:  40_000_000,     // langganan layanan routing per tahun
-  A9:  80_000_000,     // one-time, diamortisasi
+  A2: 50_000_000,
+  A3: 20_000_000,     // one-time, diamortisasi (lihat AMORTIZATION_YEARS)
+  A5: 500_000_000,    // one-time, diamortisasi
+  A6: 150_000_000,    // one-time (docking), diamortisasi tiap ~2 tahun (fouling terbentuk lagi)
+  A7: 30_000_000,     // one-time per tahun (dilakukan rutin tahunan)
+  A8: 40_000_000,     // langganan layanan routing per tahun
+  A9: 80_000_000,     // one-time, diamortisasi
   A10: 10_000_000,     // pelatihan per tahun — paling murah, kandidat "quick win"
 }
 const AMORTIZATION_YEARS = { A3: 5, A5: 5, A6: 2, A7: 1, A9: 3 }
@@ -88,15 +88,15 @@ const REFERENCE_CO2_REDUCTION_PCT = { A2: 4.0, A3: 2.5, A5: 7.0, A6: 5.0, A7: 1.
  * { status, avgSpeedKnot, fuelPerNM, needsAction, currentFuelType }.
  */
 const APPLICABILITY = {
-  A1:  (ctx) => ctx.avgSpeedKnot != null && ctx.avgSpeedKnot > 9,
-  A2:  () => true,
-  A3:  () => true,
-  A4:  (ctx) => ctx.currentFuelType !== 'B50',
-  A5:  (ctx) => ctx.needsAction,   // "last resort" — cuma relevan kalau kondisi memang perlu tindakan
-  A6:  (ctx) => ctx.fuelPerNM == null || ctx.fuelPerNM > 0.035,
-  A7:  () => true,
-  A8:  (ctx) => (ctx.status?.distance_nm_ytd ?? 0) > 5000,   // relevan utk operasi jarak jauh/reguler
-  A9:  (ctx) => ctx.fuelPerNM != null && ctx.fuelPerNM > 0.05,   // sinyal indikasi mesin kurang efisien
+  A1: (ctx) => ctx.avgSpeedKnot != null && ctx.avgSpeedKnot > 9,
+  A2: () => true,
+  A3: () => true,
+  A4: (ctx) => ctx.currentFuelType !== 'B50',
+  A5: (ctx) => ctx.needsAction,   // "last resort" — cuma relevan kalau kondisi memang perlu tindakan
+  A6: (ctx) => ctx.fuelPerNM == null || ctx.fuelPerNM > 0.035,
+  A7: () => true,
+  A8: (ctx) => (ctx.status?.distance_nm_ytd ?? 0) > 5000,   // relevan utk operasi jarak jauh/reguler
+  A9: (ctx) => ctx.fuelPerNM != null && ctx.fuelPerNM > 0.05,   // sinyal indikasi mesin kurang efisien
   A10: () => true,
 }
 
@@ -104,8 +104,8 @@ function pctToScore(pct) {
   if (pct == null || isNaN(pct)) return 1
   if (pct >= 15) return 5
   if (pct >= 10) return 4
-  if (pct >= 5)  return 3
-  if (pct >= 2)  return 2
+  if (pct >= 5) return 3
+  if (pct >= 2) return 2
   return 1
 }
 
@@ -189,7 +189,7 @@ function computeMACC(status, avgSpeedKnot, currentFuelType = 'B35') {
     const targetSpeed = Math.max(8, avgSpeedKnot - 2)
     const refDistance = 200
     const fuelCurrent = estimateFuelMLR(refDistance, avgSpeedKnot)
-    const fuelLower   = estimateFuelMLR(refDistance, targetSpeed)
+    const fuelLower = estimateFuelMLR(refDistance, targetSpeed)
     const pct = (fuelCurrent && fuelLower && fuelCurrent > 0)
       ? ((fuelCurrent - fuelLower) / fuelCurrent) * 100
       : 0
