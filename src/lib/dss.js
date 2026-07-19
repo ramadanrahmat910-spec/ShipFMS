@@ -63,7 +63,7 @@ export const DSS_ALTERNATIVES = {
   A7: { label: 'Propeller Polishing', desc: 'Poles baling-baling untuk pulihkan efisiensi dorong' },
   A8: { label: 'Weather Routing', desc: 'Rute mengikuti cuaca/arus untuk kurangi hambatan jarak jauh' },
   A9: { label: 'Engine Tuning & Preventive Maint.', desc: 'Penyetelan/perawatan mesin preventif' },
-  A10: { label: 'Pelatihan Kru — Operasi Hemat BBM', desc: 'Pelatihan praktik operasional hemat bahan bakar' },
+  A10: { label: 'Evaluasi Penggunaan Fuel Consumption', desc: 'Optimalisasikan efisiensi penggunaan bahan bakar' },
 }
 
 // [ASUMSI ILUSTRATIF — sebutkan di metodologi] Biaya & %CO2 untuk
