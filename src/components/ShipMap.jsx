@@ -245,7 +245,6 @@ export default function ShipMap({ ships = [], selectedKey, onSelectShip, focusVo
                     `${v.from_port ?? "?"} → ${v.to_port ?? "?"}<br/><span style="opacity:.7">${v.date_departure ? formatDbDateDisplay(v.date_departure, s.ship_key) : ""}</span>`,
                     { sticky: true }
                   )
-                  .addTo(map)
                 return {
                   voyage_id: v.voyage_id,
                   dep: v.date_departure ? new Date(v.date_departure).getTime() : null,
