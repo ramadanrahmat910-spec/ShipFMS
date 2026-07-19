@@ -54,16 +54,16 @@ import {
 // jadi 3 kartu di UI otomatis berubah isinya mengikuti kondisi kapal
 // (bukan cuma urutannya yang berubah dari 5 opsi yang sama terus).
 export const DSS_ALTERNATIVES = {
-  A1: { label: 'Slow Steaming', desc: 'Menurunkan kecepatan rata-rata operasional' },
-  A2: { label: 'Voyage Optimization', desc: 'Optimasi rute & jadwal pelayaran' },
-  A3: { label: 'Trim & Ballast Optimization', desc: 'Optimasi trim/ballast untuk kurangi hambatan air' },
-  A4: { label: 'Penggunaan Bahan Bakar B50', desc: 'Beralih ke BBM dengan Cf lebih rendah' },
-  A5: { label: 'Technical Inspection', desc: 'Inspeksi teknis mesin & lambung (kondisi serius)' },
-  A6: { label: 'Hull Cleaning & Antifouling', desc: 'Bersihkan & lapisi ulang lambung untuk kurangi hambatan' },
-  A7: { label: 'Propeller Polishing', desc: 'Poles baling-baling untuk pulihkan efisiensi dorong' },
-  A8: { label: 'Weather Routing', desc: 'Rute mengikuti cuaca/arus untuk kurangi hambatan jarak jauh' },
-  A9: { label: 'Engine Tuning & Preventive Maint.', desc: 'Penyetelan/perawatan mesin preventif' },
-  A10: { label: 'Evaluasi Penggunaan Fuel Consumption', desc: 'Optimalisasikan efisiensi penggunaan bahan bakar' },
+  A1: { type: 'langsung', label: 'Slow Steaming', desc: 'Menurunkan kecepatan rata-rata operasional' },
+  A2: { type: 'tidak_langsung', label: 'Voyage Optimization', desc: 'Optimasi rute & jadwal pelayaran' },
+  A3: { type: 'langsung', label: 'Trim & Ballast Optimization', desc: 'Optimasi trim/ballast untuk kurangi hambatan air' },
+  A4: { type: 'tidak_langsung', label: 'Penggunaan Bahan Bakar B50', desc: 'Beralih ke BBM dengan Cf lebih rendah' },
+  A5: { type: 'tidak_langsung', label: 'Technical Inspection', desc: 'Inspeksi teknis mesin & lambung (kondisi serius)' },
+  A6: { type: 'tidak_langsung', label: 'Hull Cleaning & Antifouling', desc: 'Bersihkan & lapisi ulang lambung untuk kurangi hambatan' },
+  A7: { type: 'tidak_langsung', label: 'Propeller Polishing', desc: 'Poles baling-baling untuk pulihkan efisiensi dorong' },
+  A8: { type: 'langsung', label: 'Weather Routing', desc: 'Rute mengikuti cuaca/arus untuk kurangi hambatan jarak jauh' },
+  A9: { type: 'langsung', label: 'Engine Tuning & Preventive Maint.', desc: 'Penyetelan/perawatan mesin preventif' },
+  A10: { type: 'tidak_langsung', label: 'Evaluasi Penggunaan Fuel Consumption', desc: 'Optimalisasikan efisiensi penggunaan bahan bakar' },
 }
 
 // [ASUMSI ILUSTRATIF — sebutkan di metodologi] Biaya & %CO2 untuk
@@ -239,6 +239,7 @@ function computeMACC(status, avgSpeedKnot, currentFuelType = 'B35') {
     const costPerTonCO2 = v.co2ReducedTon > 0 ? v.costIDR / v.co2ReducedTon : null
     return {
       key,
+      type: DSS_ALTERNATIVES[key].type,
       label: DSS_ALTERNATIVES[key].label,
       desc: DSS_ALTERNATIVES[key].desc,
       pct: v.pct,

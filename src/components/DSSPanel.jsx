@@ -82,6 +82,27 @@ export default function DSSPanel({ dss, loading }) {
 
   const { diagnosis, macc, decision, prediction, economics, boundaries } = dss
 
+  const maccLangsung = macc.filter(m => m.type === 'langsung')
+  const maccTidakLangsung = macc.filter(m => m.type === 'tidak_langsung')
+
+  const renderMaccRow = (m) => (
+    <tr key={m.key} className={`border-b border-gray-50 ${m.rank === 1 ? 'bg-emerald-50/50' : ''}`}>
+      <td className="py-1.5 pr-3 text-gray-700">{m.key} · {m.label}</td>
+      <td className="py-1.5 px-2 text-right text-gray-600">{m.co2ReducedTon} ton</td>
+      <td className={`py-1.5 px-2 text-right font-medium ${m.costIDR < 0 ? 'text-emerald-700' : 'text-gray-800'}`}>
+        {formatRp(m.costIDR)}
+      </td>
+      <td className={`py-1.5 px-2 text-right font-semibold ${m.costPerTonCO2 != null && m.costPerTonCO2 < 0 ? 'text-emerald-700' : 'text-gray-800'}`}>
+        {m.costPerTonCO2 != null ? formatRp(m.costPerTonCO2) : '—'}
+      </td>
+      <td className="py-1.5 pl-2 text-right">
+        <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold ${m.rank === 1 ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-500'}`}>
+          {m.rank}
+        </span>
+      </td>
+    </tr>
+  )
+
   return (
     <div className="flex flex-col gap-5">
       {/* 1. DIAGNOSIS */}
@@ -115,23 +136,26 @@ export default function DSSPanel({ dss, loading }) {
               </tr>
             </thead>
             <tbody>
-              {macc.map(m => (
-                <tr key={m.key} className={`border-b border-gray-50 ${m.rank === 1 ? 'bg-emerald-50/50' : ''}`}>
-                  <td className="py-1.5 pr-3 text-gray-700">{m.key} · {m.label}</td>
-                  <td className="py-1.5 px-2 text-right text-gray-600">{m.co2ReducedTon} ton</td>
-                  <td className={`py-1.5 px-2 text-right font-medium ${m.costIDR < 0 ? 'text-emerald-700' : 'text-gray-800'}`}>
-                    {formatRp(m.costIDR)}
-                  </td>
-                  <td className={`py-1.5 px-2 text-right font-semibold ${m.costPerTonCO2 != null && m.costPerTonCO2 < 0 ? 'text-emerald-700' : 'text-gray-800'}`}>
-                    {m.costPerTonCO2 != null ? formatRp(m.costPerTonCO2) : '—'}
-                  </td>
-                  <td className="py-1.5 pl-2 text-right">
-                    <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold ${m.rank === 1 ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-500'}`}>
-                      {m.rank}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {maccLangsung.length > 0 && (
+                <>
+                  <tr className="bg-emerald-50/30">
+                    <td colSpan="5" className="py-2 px-2 text-[11px] font-semibold text-emerald-800">
+                      🟢 Tindakan Langsung (Bisa dieksekusi saat berlayar)
+                    </td>
+                  </tr>
+                  {maccLangsung.map(renderMaccRow)}
+                </>
+              )}
+              {maccTidakLangsung.length > 0 && (
+                <>
+                  <tr className="bg-amber-50/30">
+                    <td colSpan="5" className="py-2 px-2 text-[11px] font-semibold text-amber-800">
+                      🟡 Tindakan Tidak Langsung / Second Choice (Tunggu kapal sandar/galangan)
+                    </td>
+                  </tr>
+                  {maccTidakLangsung.map(renderMaccRow)}
+                </>
+              )}
             </tbody>
           </table>
         </div>

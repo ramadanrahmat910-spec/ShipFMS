@@ -79,7 +79,10 @@ export default function RecommendationSummaryCards({ dss, loading }) {
     )
   }
 
-  const top3 = (dss.macc ?? []).slice(0, 3)
+  // Filter khusus untuk Dashboard utama: hanya tampilkan Tindakan Langsung
+  const top3 = (dss.macc ?? [])
+    .filter(m => m.type === 'langsung')
+    .slice(0, 3)
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
