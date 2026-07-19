@@ -1,5 +1,7 @@
 // src/lib/api.js — FETCH DARI DATABASE (via API routes)
-const BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/api$/, "")
+const BASE_URL = typeof window !== "undefined"
+  ? ""
+  : (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/api$/, "")
 
 export async function getAllShips() {
   const res = await fetch(`${BASE_URL}/api/ships`)
