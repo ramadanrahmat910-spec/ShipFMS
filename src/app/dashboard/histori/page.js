@@ -10,6 +10,7 @@ import { useEffect, useState } from "react"
 import { getAllShips, getCIIHistory } from "@/lib/api"
 import { CIIBadge } from "@/components/CIIRatingCard"
 import { formatDbDateDisplay } from "@/lib/simulationClock"
+import { useRouter } from "next/navigation"
 
 function RatingCell({ rating }) {
   if (!rating) {
@@ -23,6 +24,7 @@ function RatingCell({ rating }) {
 }
 
 export default function HistoriPage() {
+  const router = useRouter()
   const [ships, setShips] = useState([])
   const [selectedKey, setSelectedKey] = useState("klasogun")
   const [history, setHistory] = useState([])
@@ -87,6 +89,7 @@ export default function HistoriPage() {
                     </th>
                   )
                 )}
+                <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody>
@@ -116,10 +119,18 @@ export default function HistoriPage() {
                     {row.sea_time_days != null ? `${row.sea_time_days} hari` : "—"}
                   </td>
                   <td className="px-4 py-3 text-right font-semibold text-gray-900 text-xs">
-                    {row.cii_attained != null ? parseFloat(row.cii_attained).toFixed(2) : "—"}
+                    {row.cii_attained != null ? parseFloat(row.cii_attained).toFixed(3) : "—"}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <RatingCell rating={row.rating} />
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <button
+                      onClick={() => router.push(`/dashboard?voyageId=${row.id}&shipKey=${selectedKey}`)}
+                      className="text-xs px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 rounded transition-colors whitespace-nowrap"
+                    >
+                      Lihat di Dashboard →
+                    </button>
                   </td>
                 </tr>
               ))}

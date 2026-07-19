@@ -13,7 +13,8 @@
 //   3. [FIX] RecommendationPanel duplikat dihapus — pakai satu
 //      komponen dari @/components dengan format {priority,title,description}.
 
-import { useEffect, useState, useCallback, useMemo } from "react"
+import { useEffect, useState, useCallback, useMemo, Suspense, useRef } from "react"
+import { useSearchParams } from "next/navigation"
 import dynamic from "next/dynamic"
 import CIIRatingCard, { CIIBadge } from "@/components/CIIRatingCard"
 import ShipOperationalCard          from "@/components/ShipOperationalCard"
@@ -45,12 +46,14 @@ function MetricCard({ label, value, sub, subColor, children }) {
 
 // ─── ISI DASHBOARD (di dalam SimulationProvider) ─────────────
 function DashboardContent() {
+  const searchParams = useSearchParams()
   const { virtualTime, virtualDate } = useSimulation()
 
   const [ships,            setShips]            = useState([])
   const [shipGrades,       setShipGrades]       = useState({})
-  const [selectedKey,      setSelectedKey]      = useState("klasogun")
-  const [selectedVoyageId, setSelectedVoyageId] = useState(null)
+  const [selectedKey,      setSelectedKey]      = useState(searchParams?.get("shipKey") || "klasogun")
+  const [selectedVoyageId, setSelectedVoyageId] = useState(searchParams?.get("voyageId") ? parseInt(searchParams.get("voyageId")) : null)
+  const [showDSSModal,     setShowDSSModal]     = useState(false)
 
   const [dashData,  setDashData]  = useState(null)   // chart bulanan, cii_required, dsb (statis per kapal)
   const [voyages,   setVoyages]   = useState([])
@@ -105,7 +108,13 @@ function DashboardContent() {
     }
   }, [year])
 
+  const initialMount = useRef(true)
   useEffect(() => {
+    if (initialMount.current) {
+      initialMount.current = false
+      fetchStatic(selectedKey)
+      return
+    }
     setSelectedVoyageId(null)
     fetchStatic(selectedKey)
   }, [selectedKey, fetchStatic])
@@ -498,20 +507,41 @@ function DashboardContent() {
                detail DSS. Status grade sudah terlihat di badge atas,
                jadi kartu ini langsung ke rekomendasi tindakan. ── */}
           <div>
-            <div className="text-sm font-semibold text-gray-900 mb-3">Rekomendasi Tindakan (Top 3)</div>
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-sm font-semibold text-gray-900">Rekomendasi Tindakan (Top 3)</div>
+              <button 
+                onClick={() => setShowDSSModal(true)}
+                className="text-xs font-medium px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors flex items-center gap-1"
+              >
+                Lihat Perhitungan Detail DSS <span>📊</span>
+              </button>
+            </div>
             <RecommendationSummaryCards
               dss={dss}
               loading={viewingVoyage ? loadingVoyage : !live}
             />
           </div>
 
-          {/* ── Rekomendasi: DSS penuh (AHP+SAW) — live maupun voyage historis ── */}
-          <div>
-            <div className="text-sm font-semibold text-gray-900 mb-3">
-              {viewingVoyage ? "Decision Support System — Voyage Terpilih" : "Decision Support System — Rekomendasi Operasional"}
+          {showDSSModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-gray-900/60 backdrop-blur-sm">
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-6xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+                  <h2 className="text-lg font-semibold text-gray-900">
+                    {viewingVoyage ? "Decision Support System — Voyage Terpilih" : "Decision Support System — Rekomendasi Operasional"}
+                  </h2>
+                  <button 
+                    onClick={() => setShowDSSModal(false)}
+                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="p-6 overflow-y-auto">
+                  <DSSPanel dss={dss} loading={viewingVoyage ? loadingVoyage : !live} />
+                </div>
+              </div>
             </div>
-            <DSSPanel dss={dss} loading={viewingVoyage ? loadingVoyage : !live} />
-          </div>
+          )}
         </>
       )}
     </div>
@@ -522,7 +552,9 @@ function DashboardContent() {
 export default function DashboardPage() {
   return (
     <SimulationProvider initialSpeed={60}>
-      <DashboardContent />
+      <Suspense fallback={<div className="p-8 text-center text-gray-500">Memuat Dashboard...</div>}>
+        <DashboardContent />
+      </Suspense>
     </SimulationProvider>
   )
 }
