@@ -49,7 +49,6 @@ function RecCard({ item, tierIndex }) {
         </span>
       </div>
       <div className="flex items-center gap-2">
-        <span className="text-xl">🛠</span>
         <span className={`font-semibold text-sm ${c.text}`}>{item.label}</span>
       </div>
       <div className="text-xs text-gray-600 leading-relaxed flex-1">{item.desc}</div>

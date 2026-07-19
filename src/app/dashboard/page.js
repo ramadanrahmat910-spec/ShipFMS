@@ -509,7 +509,7 @@ function DashboardContent() {
                 onClick={() => setShowDSSModal(true)}
                 className="text-xs font-medium px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors flex items-center gap-1"
               >
-                Lihat Perhitungan Detail DSS <span>📊</span>
+                Lihat Perhitungan Detail DSS
               </button>
             </div>
             <RecommendationSummaryCards
