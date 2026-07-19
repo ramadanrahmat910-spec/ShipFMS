@@ -60,7 +60,7 @@ function MACCChart({ macc }) {
         const x = i * (300 / valid.length) + 4
         const w = (300 / valid.length) - 8
         const isNeg = m.costPerTonCO2 < 0
-        const y = isNeg ? zeroY - h : zeroY
+        const y = isNeg ? zeroY : zeroY - h
         return (
           <g key={m.key}>
             <rect x={x} y={y} width={w} height={h} rx="3" fill={isNeg ? '#10b981' : '#f59e0b'} opacity="0.85" />
